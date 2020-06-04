@@ -24,142 +24,116 @@
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
 static TaskHandle_t DemoTask = NULL;
+static aIO_handle_t master_UDP_handle = NULL;
 
-typedef struct buttons_buffer {
-    unsigned char buttons[SDL_NUM_SCANCODES];
-    SemaphoreHandle_t lock;
-} buttons_buffer_t;
+//This is the MASTER
 
-static buttons_buffer_t buttons = { 0 };
+#define MOSI_PORT 1234
+#define MISO_PORT 4321
 
-void xGetButtonInput(void)
+#define IPv4_addr "127.0.0.1"
+
+struct master_args {
+	float prev_value;
+};
+
+void masterRecv(size_t recv_size, char *buffer, void *args)
 {
-    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-        xQueueReceive(buttonInputQueue, &buttons.buttons, 0);
-        xSemaphoreGive(buttons.lock);
-    }
-}
+    float recv_value = *((float *) buffer);
 
-#define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
+    struct master_args *my_master_args = (struct master_args *) args;
+
+    printf("Previous value was %f, new value is %f\n", my_master_args->prev_value,
+            recv_value);
+
+    my_master_args->prev_value = recv_value;
+}
 
 void vDemoTask(void *pvParameters)
 {
-    // structure to store time retrieved from Linux kernel
-    static struct timespec the_time;
-    static char our_time_string[100];
-    static int our_time_strings_width = 0;
+	tumDrawBindThread();
 
-    // Needed such that Gfx library knows which thread controlls drawing
-    // Only one thread can call tumDrawUpdateScreen while and thread can call
-    // the drawing functions to draw objects. This is a limitation of the SDL
-    // backend.
-    tumDrawBindThread();
+	static int random_value;
 
-    while (1) {
-        tumEventFetchEvents(FETCH_EVENT_NONBLOCK); // Query events backend for new events, ie. button presses
-        xGetButtonInput(); // Update global input
+	struct master_args my_master_args = { 0 };
 
-        // `buttons` is a global shared variable and as such needs to be
-        // guarded with a mutex, mutex must be obtained before accessing the
-        // resource and given back when you're finished. If the mutex is not
-        // given back then no other task can access the reseource.
-        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-            if (buttons.buttons[KEYCODE(
-                                    Q)]) { // Equiv to SDL_SCANCODE_Q
-                exit(EXIT_SUCCESS);
-            }
-            xSemaphoreGive(buttons.lock);
-        }
+	master_UDP_handle =
+		aIOOpenUDPSocket(IPv4_addr, MISO_PORT, sizeof(float),
+				 masterRecv, (void *)&my_master_args);
 
-        tumDrawClear(White); // Clear screen
+	if (master_UDP_handle == NULL) {
+		PRINT_ERROR("master UDP socket failed to open");
+		exit(EXIT_FAILURE);
+	}
 
-        clock_gettime(CLOCK_REALTIME,
-                      &the_time); // Get kernel real time
+	while (1) {
+		tumEventFetchEvents(FETCH_EVENT_NONBLOCK);
 
-        // Format our string into our char array
-        sprintf(our_time_string,
-                "There has been %ld seconds since the Epoch. Press Q to quit",
-                (long int)the_time.tv_sec);
+		// Basic sleep of 1000 milliseconds
+		vTaskDelay((TickType_t)1000);
 
-        // Get the width of the string on the screen so we can center it
-        // Returns 0 if width was successfully obtained
-        if (!tumGetTextSize((char *)our_time_string,
-                            &our_time_strings_width, NULL))
-            tumDrawText(our_time_string,
-                        SCREEN_WIDTH / 2 -
-                        our_time_strings_width / 2,
-                        SCREEN_HEIGHT / 2 - DEFAULT_FONT_SIZE / 2,
-                        TUMBlue);
+		random_value = rand() % 100 + 1;
 
-        tumDrawUpdateScreen(); // Refresh the screen to draw string
-
-        // Basic sleep of 1000 milliseconds
-        vTaskDelay((TickType_t)1000);
-    }
+		if (aIOSocketPut(UDP, IPv4_addr, MOSI_PORT, (char *)&random_value,
+				 sizeof(random_value)))
+            PRINT_ERROR("Failed to send from master");
+	}
 }
 
 int main(int argc, char *argv[])
 {
-    char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
+	char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
 
-    printf("Initializing: ");
+	printf("Initializing: ");
 
-    if (tumDrawInit(bin_folder_path)) {
-        PRINT_ERROR("Failed to initialize drawing");
-        goto err_init_drawing;
-    }
+	if (tumDrawInit(bin_folder_path)) {
+		PRINT_ERROR("Failed to initialize drawing");
+		goto err_init_drawing;
+	}
 
-    if (tumEventInit()) {
-        PRINT_ERROR("Failed to initialize events");
-        goto err_init_events;
-    }
+	if (tumEventInit()) {
+		PRINT_ERROR("Failed to initialize events");
+		goto err_init_events;
+	}
 
-    if (tumSoundInit(bin_folder_path)) {
-        PRINT_ERROR("Failed to initialize audio");
-        goto err_init_audio;
-    }
+	if (tumSoundInit(bin_folder_path)) {
+		PRINT_ERROR("Failed to initialize audio");
+		goto err_init_audio;
+	}
 
-    buttons.lock = xSemaphoreCreateMutex(); // Locking mechanism
-    if (!buttons.lock) {
-        PRINT_ERROR("Failed to create buttons lock");
-        goto err_buttons_lock;
-    }
+	if (xTaskCreate(vDemoTask, "DemoTask", mainGENERIC_STACK_SIZE * 2, NULL,
+			mainGENERIC_PRIORITY, &DemoTask) != pdPASS) {
+		goto err_demotask;
+	}
 
-    if (xTaskCreate(vDemoTask, "DemoTask", mainGENERIC_STACK_SIZE * 2, NULL,
-                    mainGENERIC_PRIORITY, &DemoTask) != pdPASS) {
-        goto err_demotask;
-    }
+	vTaskStartScheduler();
 
-    vTaskStartScheduler();
-
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 
 err_demotask:
-    vSemaphoreDelete(buttons.lock);
-err_buttons_lock:
-    tumSoundExit();
+	tumSoundExit();
 err_init_audio:
-    tumEventExit();
+	tumEventExit();
 err_init_events:
-    tumDrawExit();
+	tumDrawExit();
 err_init_drawing:
-    return EXIT_FAILURE;
+	return EXIT_FAILURE;
 }
 
 // cppcheck-suppress unusedFunction
 __attribute__((unused)) void vMainQueueSendPassed(void)
 {
-    /* This is just an example implementation of the "queue send" trace hook. */
+	/* This is just an example implementation of the "queue send" trace hook. */
 }
 
 // cppcheck-suppress unusedFunction
 __attribute__((unused)) void vApplicationIdleHook(void)
 {
 #ifdef __GCC_POSIX__
-    struct timespec xTimeToSleep, xTimeSlept;
-    /* Makes the process more agreeable when using the Posix simulator. */
-    xTimeToSleep.tv_sec = 1;
-    xTimeToSleep.tv_nsec = 0;
-    nanosleep(&xTimeToSleep, &xTimeSlept);
+	struct timespec xTimeToSleep, xTimeSlept;
+	/* Makes the process more agreeable when using the Posix simulator. */
+	xTimeToSleep.tv_sec = 1;
+	xTimeToSleep.tv_nsec = 0;
+	nanosleep(&xTimeToSleep, &xTimeSlept);
 #endif
 }
