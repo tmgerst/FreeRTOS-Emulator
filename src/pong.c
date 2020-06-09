@@ -86,13 +86,13 @@ void UDPHandler(size_t read_size, char *buffer, void *args)
 
     //printf("UDP Recv in handler: %s\n", buffer);
     if (xSemaphoreTake(HandleUDP, 0) == pdTRUE) {
-        if (strcmp(buffer, "INC") == 0) {
+        if (strncmp(buffer, "INC", (read_size < 3) ? read_size : 3) == 0) {
             next_key = INC;
         }
-        else if (strcmp(buffer, "DEC") == 0) {
+        else if (strncmp(buffer, "DEC", (read_size < 3) ? read_size : 3) == 0) {
             next_key = DEC;
         }
-        else if (strcmp(buffer, "NONE") == 0) {
+        else if (strncmp(buffer, "NONE", (read_size < 4) ? read_size : 4) == 0) {
             next_key = NONE;
         }
 
@@ -214,9 +214,10 @@ unsigned char xCheckPongLeftInput(unsigned short *left_paddle_y)
 
 unsigned char xCheckPongUDPInput(unsigned short *paddle_y)
 {
-    static opponent_cmd_t current_key;
+    static opponent_cmd_t current_key = NONE;
 
-    xQueueReceive(NextKeyQueue, &current_key, 0);
+    if(NextKeyQueue)
+        xQueueReceive(NextKeyQueue, &current_key, 0);
 
     if (current_key == INC) {
         vDecrementPaddleY(paddle_y);
