@@ -109,8 +109,8 @@ void UDPHandler(size_t read_size, char *buffer, void *args)
 
 void vUDPControlTask(void *pvParameters)
 {
-    static char *cmd_pause = "PAUSE";
-    static char *cmd_resume = "RESUME";
+    /** static char *cmd_pause = "PAUSE"; */
+    /** static char *cmd_resume = "RESUME"; */
     static char buf[50];
     char *addr = NULL; // Loopback
     in_port_t port = UDP_RECEIVE_PORT;

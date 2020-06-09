@@ -1,6 +1,6 @@
 # ESPL Opponents
 
-You will find precopiled executeabled to game opponents in this directory.
+You will find pre-compiled executables to game opponents in this directory.
 
 ## Manual
 
@@ -39,7 +39,7 @@ Hardness of the opponent. (1 is lowest, 2 medium and 3 highest)
 Example usage:
 
 ```
-./pong_opponent -d2 
+./pong_opponent -d2
 ```
 
 ### Space Invaders Game

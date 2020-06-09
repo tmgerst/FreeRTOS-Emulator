@@ -146,6 +146,7 @@ typedef struct wall {
  * @param callback The callback function called (if set) when the ball collides
  * with a wall
  * @param args Args passed to callback function
+ * @param sprite Optional sprite image to be stored within the ball object
  * @return A pointer to the created ball, program exits if creation failed
  */
 ball_t *createBall(signed short initial_x, signed short initial_y,
