@@ -72,6 +72,7 @@ static QueueHandle_t StartDirectionQueue = NULL;
 static QueueHandle_t NextKeyQueue = NULL;
 static QueueHandle_t BallYQueue = NULL;
 static QueueHandle_t PaddleYQueue = NULL;
+static QueueHandle_t DifficultyQueue = NULL;
 
 static SemaphoreHandle_t BallInactive = NULL;
 static SemaphoreHandle_t HandleUDP = NULL;
@@ -82,7 +83,7 @@ typedef enum {NONE = 0, INC = 1, DEC = -1} opponent_cmd_t;
 
 void UDPHandler(size_t read_size, char *buffer, void *args)
 {
-    opponent_cmd_t next_key;
+    opponent_cmd_t next_key = NONE;
 
     //printf("UDP Recv in handler: %s\n", buffer);
     if (xSemaphoreTake(HandleUDP, 0) == pdTRUE) {
@@ -116,6 +117,8 @@ void vUDPControlTask(void *pvParameters)
     in_port_t port = UDP_RECEIVE_PORT;
     unsigned int ball_y = 0;
     unsigned int paddle_y = 0;
+    char difficulty = 1;
+    char last_difficulty = -1;
 
 
     udp_soc_receive = aIOOpenUDPSocket(addr, port, UDP_BUFFER_SIZE,
@@ -128,6 +131,7 @@ void vUDPControlTask(void *pvParameters)
         vTaskDelay(pdMS_TO_TICKS(15));
         while (xQueueReceive(BallYQueue, &ball_y, 0) == pdTRUE) {}
         while (xQueueReceive(PaddleYQueue, &paddle_y, 0) == pdTRUE) {}
+        while (xQueueReceive(DifficultyQueue, &difficulty, 0) == pdTRUE) {}
         signed int diff = ball_y - paddle_y;
         if (diff > 0) {
             sprintf(buf, "+%d", diff);
@@ -137,6 +141,12 @@ void vUDPControlTask(void *pvParameters)
         }
         aIOSocketPut(UDP, NULL, UDP_TRANSMIT_PORT, buf,
                      strlen(buf));
+	if (last_difficulty != difficulty) {
+            sprintf(buf, "D%d", difficulty+1);
+            aIOSocketPut(UDP, NULL, UDP_TRANSMIT_PORT, buf,
+                         strlen(buf));
+	    last_difficulty = difficulty;
+        }
     }
 }
 
@@ -274,7 +284,7 @@ void vDrawHelpText(void)
     tumFontSetSize(prev_font_size);
 }
 
-void vDrawOpponentText(char enabled)
+void vDrawOpponentText(char enabled, char difficulty)
 {
     static char str[100] = { 0 };
     static int text_width;
@@ -293,6 +303,18 @@ void vDrawOpponentText(char enabled)
         tumDrawText(str,
                     DEFAULT_FONT_SIZE * 2.5,
                     DEFAULT_FONT_SIZE * 2.5, White);
+
+    if (enabled) {
+        sprintf(str, "[D]ifficulty: %d", difficulty+1);
+    }
+    else {
+        sprintf(str, " ");
+    }
+
+    if (!tumGetTextSize((char *)str, &text_width, NULL))
+        tumDrawText(str,
+                    DEFAULT_FONT_SIZE * 2.5,
+                    DEFAULT_FONT_SIZE * 4.5, White);
 
     tumFontSetSize(prev_font_size);
 }
@@ -494,6 +516,7 @@ void vPongControlTask(void *pvParameters)
     unsigned int right_score = 0;
 
     char opponent_mode = 0; // 0: player 1: computer
+    char difficulty = 1; // 0: easy 1: normal 2: hard
 
     BallInactive = xSemaphoreCreateBinary();
     HandleUDP = xSemaphoreCreateMutex();
@@ -501,6 +524,7 @@ void vPongControlTask(void *pvParameters)
     NextKeyQueue = xQueueCreate(1, sizeof(opponent_cmd_t));
     BallYQueue = xQueueCreate(5, sizeof(unsigned long));
     PaddleYQueue = xQueueCreate(5, sizeof(unsigned long));
+    DifficultyQueue = xQueueCreate(5, sizeof(unsigned char));
 
     setBallSpeed(my_ball, 250, 250, 0, SET_BALL_SPEED_AXES);
 
@@ -551,6 +575,12 @@ void vPongControlTask(void *pvParameters)
                         else {
                             vTaskSuspend(UDPControlTask);
                         }
+                        vTaskDelay(200);
+                    }
+                    else if (buttons.buttons[KEYCODE(D)]) {
+                        xSemaphoreGive(buttons.lock);
+                        difficulty = (difficulty + 1) % 3;
+                        xQueueSend(DifficultyQueue, (void *) &difficulty, portMAX_DELAY);
                         vTaskDelay(200);
                     }
                     else {
@@ -626,7 +656,7 @@ void vPongControlTask(void *pvParameters)
                     vDrawWall(top_wall);
                     vDrawWall(bottom_wall);
                     vDrawHelpText();
-                    vDrawOpponentText(opponent_mode);
+                    vDrawOpponentText(opponent_mode, difficulty);
                     vDrawNetDots();
 
                     // Check for score updates
