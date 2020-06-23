@@ -130,6 +130,8 @@ void vUDPControlTask(void *pvParameters)
     in_port_t port = UDP_RECEIVE_PORT;
     unsigned int ball_y = 0;
     unsigned int paddle_y = 0;
+    char last_difficulty = -1;
+    char difficulty = 1;
 
     udp_soc_receive =
         aIOOpenUDPSocket(addr, port, UDP_BUFFER_SIZE, UDPHandler, NULL);
