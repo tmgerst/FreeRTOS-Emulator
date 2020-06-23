@@ -39,9 +39,13 @@ Hardness of the opponent. (1 is lowest, 2 medium and 3 highest)
 Example usage:
 
 ```
-./pong_opponent -d2
+./pong_opponent -v -d2
 ```
 
 ### Space Invaders Game
 
-Not published, yet.
+Example usage:
+
+```
+./space_invaders_opponent -v -d2
+```
