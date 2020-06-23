@@ -141,11 +141,11 @@ void vUDPControlTask(void *pvParameters)
         }
         aIOSocketPut(UDP, NULL, UDP_TRANSMIT_PORT, buf,
                      strlen(buf));
-	if (last_difficulty != difficulty) {
-            sprintf(buf, "D%d", difficulty+1);
+        if (last_difficulty != difficulty) {
+            sprintf(buf, "D%d", difficulty + 1);
             aIOSocketPut(UDP, NULL, UDP_TRANSMIT_PORT, buf,
                          strlen(buf));
-	    last_difficulty = difficulty;
+            last_difficulty = difficulty;
         }
     }
 }
@@ -226,8 +226,9 @@ unsigned char xCheckPongUDPInput(unsigned short *paddle_y)
 {
     static opponent_cmd_t current_key = NONE;
 
-    if(NextKeyQueue)
+    if (NextKeyQueue) {
         xQueueReceive(NextKeyQueue, &current_key, 0);
+    }
 
     if (current_key == INC) {
         vDecrementPaddleY(paddle_y);
@@ -305,7 +306,7 @@ void vDrawOpponentText(char enabled, char difficulty)
                     DEFAULT_FONT_SIZE * 2.5, White);
 
     if (enabled) {
-        sprintf(str, "[D]ifficulty: %d", difficulty+1);
+        sprintf(str, "[D]ifficulty: %d", difficulty + 1);
     }
     else {
         sprintf(str, " ");
