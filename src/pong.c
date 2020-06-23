@@ -145,7 +145,7 @@ void vUDPControlTask(void *pvParameters)
         while (xQueueReceive(PaddleYQueue, &paddle_y, 0) == pdTRUE) {
         }
         while (xQueueReceive(DifficultyQueue, &difficulty, 0) == pdTRUE) {
-	}
+        }
         signed int diff = ball_y - paddle_y;
         if (diff > 0) {
             sprintf(buf, "+%d", diff);
@@ -561,7 +561,7 @@ void vPongControlTask(void *pvParameters)
     }
     DifficultyQueue = xQueueCreate(5, sizeof(unsigned char));
     if (!DifficultyQueue) {
-	exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
 
     setBallSpeed(my_ball, 250, 250, 0, SET_BALL_SPEED_AXES);
