@@ -163,6 +163,27 @@ coord_t update_text_position(coord_t current_position, int offset_per_call, int 
     return new_position;
 }
 
+void vButtonPresses(int* button_counter){
+    static char button_buffer[40] = { 0 };
+
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+
+        if (buttons.buttons[KEYCODE(A)]) { (*button_counter)++; }
+        if (buttons.buttons[KEYCODE(B)]) { (*(button_counter+1))++; }
+        if (buttons.buttons[KEYCODE(C)]) { (*(button_counter+2))++; }
+        if (buttons.buttons[KEYCODE(D)]) { (*(button_counter+3))++; }
+
+        sprintf(button_buffer, "A: %d | B: %d | C: %d | D: %d",
+                *button_counter,
+                *(button_counter+1),
+                *(button_counter+2),
+                *(button_counter+3));
+        xSemaphoreGive(buttons.lock);
+
+        tumDrawText(button_buffer, 10, DEFAULT_FONT_SIZE, Black);
+    }
+}
+
 void vBigDrawingTask(void *pvParameters){
 
     char moving_text[50] = "Your advertisement here!";
@@ -174,24 +195,25 @@ void vBigDrawingTask(void *pvParameters){
     coord_t position_square = {0.625*SCREEN_WIDTH-25, SCREEN_HEIGHT/2};
     coord_t position_moving_text = {SCREEN_WIDTH/2-moving_text_width/2, 0.125*SCREEN_HEIGHT-DEFAULT_FONT_SIZE/2};
 
-    double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
+    int button_counter[4] = {0, 0, 0, 0}; // Initializing button counter
 
     // text moves to the right: direction = 1
     // text moves to the left: direction = -1
     int direction = 1;
     int offset_per_call = 10;
+    double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
 
     tumDrawBindThread();
 
     while(1){
         tumEventFetchEvents(FETCH_EVENT_NONBLOCK); // Query events backend for new events, ie. button presses
-        tumDrawClear(White);
+        xGetButtonInput(); // Update global input        
 
+        tumDrawClear(White);
         vDrawStaticItems();
 
-        radian = radian - 0.05*M_PI;
-
         direction = invert_direction_on_collision(moving_text, position_moving_text, offset_per_call, direction);
+        radian = radian - 0.05*M_PI; // update radian for circular movement
 
         position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian);
         position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI); // +M_PI: square should be on opposite side of circle
@@ -200,6 +222,8 @@ void vBigDrawingTask(void *pvParameters){
         tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
         tumDrawText(moving_text, position_moving_text.x, position_moving_text.y, Orange);
+
+        vButtonPresses(button_counter);
 
         tumDrawUpdateScreen();
         vTaskDelay((TickType_t)50);
