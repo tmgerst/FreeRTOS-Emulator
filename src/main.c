@@ -23,7 +23,8 @@
 #define mainGENERIC_PRIORITY (tskIDLE_PRIORITY)
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
-// Handle for demo task currently not needed
+#define RADIUS_FOR_CIRCLE_MOVEMENT 80
+
 // static TaskHandle_t DemoTask = NULL;
 static TaskHandle_t BigDrawingTask = NULL;
 
@@ -101,26 +102,47 @@ void vDemoTask(void *pvParameters)
 }
 
 void vDrawStaticItems(void){
-        coord_t points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25}, 
-                             {0.5*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT+25},
-                             {0.5*SCREEN_WIDTH+25, 0.5*SCREEN_HEIGHT+25}} ;
+        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25}, 
+                             {0.5*SCREEN_WIDTH-18, 0.5*SCREEN_HEIGHT+18},
+                             {0.5*SCREEN_WIDTH+18, 0.5*SCREEN_HEIGHT+18}} ; // 18 as offset: all points of the triangle are distanced
+                                                                            // approximately 25 pixels from the center of the screen
+                                                                            // 25 = sqrt(2a²) --> a ~ 18
 
-        tumDrawCircle(0.375*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT, 25, TUMBlue);
-        tumDrawTriangle(points, Silver);
-        tumDrawFilledBox(0.625*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT-25, 50, 50, Lime);
+        tumDrawTriangle(triangle_points, Silver);
+}
+
+// Calculates coordinates for circular movement around the center of the screen
+coord_t update_positions(int radius, double radian){
+    int x_coord = SCREEN_WIDTH/2 + radius * cos(radian);
+    int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian);
+    coord_t new_positions = {x_coord, y_coord};
+    return new_positions;
 }
 
 void vBigDrawingTask(void *pvParameters){
 
+    // Starting positions for moving shapes
+    coord_t position_circle = {0.375*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT}; 
+    coord_t position_square = {0.625*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT};
+    double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
+
     tumDrawBindThread();
+
     while(1){
         tumEventFetchEvents(FETCH_EVENT_NONBLOCK); // Query events backend for new events, ie. button presses
         tumDrawClear(White);
 
         vDrawStaticItems();
-        
+
+        radian = radian - 0.05*M_PI;
+        position_circle = update_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian);
+        position_square = update_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI); // +M_PI: square should be on opposite side of circle
+
+        tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
+        tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
+
         tumDrawUpdateScreen();
-        vTaskDelay((TickType_t)1000);
+        vTaskDelay((TickType_t)50);
     }
 }
 
