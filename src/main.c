@@ -23,7 +23,9 @@
 #define mainGENERIC_PRIORITY (tskIDLE_PRIORITY)
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
-static TaskHandle_t DemoTask = NULL;
+// Handle for demo task currently not needed
+// static TaskHandle_t DemoTask = NULL;
+static TaskHandle_t BigDrawingTask = NULL;
 
 typedef struct buttons_buffer {
     unsigned char buttons[SDL_NUM_SCANCODES];
@@ -98,6 +100,30 @@ void vDemoTask(void *pvParameters)
     }
 }
 
+void vDrawStaticItems(void){
+        coord_t points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25}, 
+                             {0.5*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT+25},
+                             {0.5*SCREEN_WIDTH+25, 0.5*SCREEN_HEIGHT+25}} ;
+
+        tumDrawCircle(0.375*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT, 25, TUMBlue);
+        tumDrawTriangle(points, Silver);
+        tumDrawFilledBox(0.625*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT-25, 50, 50, Lime);
+}
+
+void vBigDrawingTask(void *pvParameters){
+
+    tumDrawBindThread();
+    while(1){
+        tumEventFetchEvents(FETCH_EVENT_NONBLOCK); // Query events backend for new events, ie. button presses
+        tumDrawClear(White);
+
+        vDrawStaticItems();
+        
+        tumDrawUpdateScreen();
+        vTaskDelay((TickType_t)1000);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
@@ -125,16 +151,27 @@ int main(int argc, char *argv[])
         goto err_buttons_lock;
     }
 
+    // Demo Task not needed currently
+    /*
     if (xTaskCreate(vDemoTask, "DemoTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY, &DemoTask) != pdPASS) {
         goto err_demotask;
+    }
+    */
+
+    
+    if (xTaskCreate(vBigDrawingTask, "BigDrawingTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY, &BigDrawingTask) != pdPASS) {
+        goto err_big_drawing;
     }
 
     vTaskStartScheduler();
 
     return EXIT_SUCCESS;
 
-err_demotask:
+// err_demotask:
+err_big_drawing:
+    vTaskDelete(vBigDrawingTask);
     vSemaphoreDelete(buttons.lock);
 err_buttons_lock:
     tumSoundExit();
