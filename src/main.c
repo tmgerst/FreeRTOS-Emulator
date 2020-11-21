@@ -24,6 +24,8 @@
 #define mainGENERIC_STACK_SIZE ((unsigned short)2560)
 
 #define RADIUS_FOR_CIRCLE_MOVEMENT 80
+#define APPROX_OFFSET_FOR_TEXT_DEFLECTION 15    // Offset to prevent text from going a little bit into the screen wall, 
+                                                // since text box is slightly wider than the actual width of the text
 
 // static TaskHandle_t DemoTask = NULL;
 static TaskHandle_t BigDrawingTask = NULL;
@@ -102,29 +104,82 @@ void vDemoTask(void *pvParameters)
 }
 
 void vDrawStaticItems(void){
-        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25}, 
-                             {0.5*SCREEN_WIDTH-18, 0.5*SCREEN_HEIGHT+18},
-                             {0.5*SCREEN_WIDTH+18, 0.5*SCREEN_HEIGHT+18}} ; // 18 as offset: all points of the triangle are distanced
-                                                                            // approximately 25 pixels from the center of the screen
-                                                                            // 25 = sqrt(2a²) --> a ~ 18
+        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25},     // 18 as offset: all points of the triangle are distanced
+                             {0.5*SCREEN_WIDTH-18, 0.5*SCREEN_HEIGHT+18},           // approximately 25 pixels from the center of the screen
+                             {0.5*SCREEN_WIDTH+18, 0.5*SCREEN_HEIGHT+18}} ;         // 25 = sqrt(2a²) --> a ~ 18
+
+        static char not_moving_text[70] = "A circle, a triangle and a square walk into a bar ...";
+        static int not_moving_text_width = 0;
+
+        // Get the width of the string on the screen so we can center it
+        // Returns 0 if width was successfully obtained
+        if (!tumGetTextSize((char *)not_moving_text,
+                            &not_moving_text_width, NULL))
+            tumDrawText(not_moving_text,
+                        SCREEN_WIDTH / 2 -
+                        not_moving_text_width / 2,
+                        0.875*SCREEN_HEIGHT - DEFAULT_FONT_SIZE / 2,
+                        Orange);
 
         tumDrawTriangle(triangle_points, Silver);
 }
 
 // Calculates coordinates for circular movement around the center of the screen
-coord_t update_positions(int radius, double radian){
+coord_t update_shape_positions(int radius, double radian){
     int x_coord = SCREEN_WIDTH/2 + radius * cos(radian);
     int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian);
     coord_t new_positions = {x_coord, y_coord};
     return new_positions;
 }
 
+// Checks if the moving text has hit a screen boundary. If so, the direction of movement is inverted.
+int invert_direction_on_collision(char* text, coord_t current_position, int offset_per_call, int direction){
+
+    int moving_text_width = 0;
+    tumGetTextSize((char *) text, &moving_text_width, NULL);
+    int future_position = 0;
+
+    // if text moves to the right: direction = +1
+    // if text moves to the left: direction = -1
+    if (direction > 0){
+        future_position = current_position.x + moving_text_width + offset_per_call; // if text moves to the right, the text width has to be added
+    }
+    else{
+        future_position = current_position.x + offset_per_call; // if text moves to the left, text width is not important
+    } 
+
+    // printf("%i\n", future_position);
+    
+    // if text collides with screen boundaries, invert the direction
+    if (future_position > SCREEN_WIDTH || future_position < 15){
+        direction = direction*(-1);
+    }
+    return direction;
+}
+
+coord_t update_text_position(coord_t current_position, int offset_per_call, int direction){
+    current_position.x = current_position.x + offset_per_call*direction;
+    coord_t new_position = {current_position.x, current_position.y};    
+    return new_position;
+}
+
 void vBigDrawingTask(void *pvParameters){
 
+    char moving_text[50] = "Your advertisement here!";
+    int moving_text_width = 0;
+    tumGetTextSize((char *) moving_text, &moving_text_width, NULL);
+
     // Starting positions for moving shapes
-    coord_t position_circle = {0.375*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT}; 
-    coord_t position_square = {0.625*SCREEN_WIDTH-25, 0.5*SCREEN_HEIGHT};
+    coord_t position_circle = {0.375*SCREEN_WIDTH, SCREEN_HEIGHT/2}; 
+    coord_t position_square = {0.625*SCREEN_WIDTH-25, SCREEN_HEIGHT/2};
+    coord_t position_moving_text = {SCREEN_WIDTH/2-moving_text_width/2, 0.125*SCREEN_HEIGHT-DEFAULT_FONT_SIZE/2};
+
     double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
+
+    // text moves to the right: direction = 1
+    // text moves to the left: direction = -1
+    int direction = 1;
+    int offset_per_call = 10;
 
     tumDrawBindThread();
 
@@ -135,11 +190,16 @@ void vBigDrawingTask(void *pvParameters){
         vDrawStaticItems();
 
         radian = radian - 0.05*M_PI;
-        position_circle = update_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian);
-        position_square = update_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI); // +M_PI: square should be on opposite side of circle
+
+        direction = invert_direction_on_collision(moving_text, position_moving_text, offset_per_call, direction);
+
+        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian);
+        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI); // +M_PI: square should be on opposite side of circle
+        position_moving_text = update_text_position(position_moving_text, offset_per_call, direction);
 
         tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
+        tumDrawText(moving_text, position_moving_text.x, position_moving_text.y, Orange);
 
         tumDrawUpdateScreen();
         vTaskDelay((TickType_t)50);
