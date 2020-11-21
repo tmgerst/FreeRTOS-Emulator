@@ -163,25 +163,34 @@ coord_t update_text_position(coord_t current_position, int offset_per_call, int 
     return new_position;
 }
 
+// Takes in a pointer to an integer array with size 4, since there are four buttons to be checked
 void vButtonPresses(int* button_counter){
     static char button_buffer[40] = { 0 };
 
-    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-
-        if (buttons.buttons[KEYCODE(A)]) { (*button_counter)++; }
-        if (buttons.buttons[KEYCODE(B)]) { (*(button_counter+1))++; }
-        if (buttons.buttons[KEYCODE(C)]) { (*(button_counter+2))++; }
-        if (buttons.buttons[KEYCODE(D)]) { (*(button_counter+3))++; }
-
-        sprintf(button_buffer, "A: %d | B: %d | C: %d | D: %d",
-                *button_counter,
-                *(button_counter+1),
-                *(button_counter+2),
-                *(button_counter+3));
-        xSemaphoreGive(buttons.lock);
-
-        tumDrawText(button_buffer, 10, DEFAULT_FONT_SIZE, Black);
+    signed char mouse_state_left = tumEventGetMouseLeft();
+    if (mouse_state_left != 0) {    // messy, maybe review this
+        *button_counter = 0;
+        *(button_counter+1) = 0;
+        *(button_counter+2) = 0;
+        *(button_counter+3) = 0;
     }
+    else{
+        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+
+            if (buttons.buttons[KEYCODE(A)]) { (*button_counter)++; }
+            if (buttons.buttons[KEYCODE(B)]) { (*(button_counter+1))++; }
+            if (buttons.buttons[KEYCODE(C)]) { (*(button_counter+2))++; }
+            if (buttons.buttons[KEYCODE(D)]) { (*(button_counter+3))++; }
+
+            sprintf(button_buffer, "A: %d | B: %d | C: %d | D: %d",
+                    *button_counter,
+                    *(button_counter+1),
+                    *(button_counter+2),
+                    *(button_counter+3));
+            xSemaphoreGive(buttons.lock);
+        }
+    }
+    tumDrawText(button_buffer, 10, DEFAULT_FONT_SIZE, Black);
 }
 
 void vBigDrawingTask(void *pvParameters){
