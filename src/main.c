@@ -179,25 +179,28 @@ TickType_t vButtonPresses(int* button_counter, TickType_t last_change){
     static char button_buffer[40] = { 0 };
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-
+        // increment counter A if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(A)]) {
             if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
                 (*button_counter)++;
                 last_change = xTaskGetTickCount();
             }
         }
+        // increment counter B if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(B)]) { 
             if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
                 (*(button_counter+1))++;
                 last_change = xTaskGetTickCount();
             }
         }
+        // increment counter C if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(C)]) {
             if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
                 (*(button_counter+2))++;
                 last_change = xTaskGetTickCount();
             }
         }
+        // increment counter D if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(D)]) {
             if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
                 (*(button_counter+3))++;
@@ -212,8 +215,14 @@ TickType_t vButtonPresses(int* button_counter, TickType_t last_change){
                 *(button_counter+3));
         xSemaphoreGive(buttons.lock);
     }
-    tumDrawText(button_buffer, 10, DEFAULT_FONT_SIZE, Black);
+    tumDrawText(button_buffer, 10, 2*DEFAULT_FONT_SIZE, Black);
     return last_change;
+}
+
+void vPrintMouseValues(void) {
+    static char values[20] = {0};
+    sprintf(values, "x-Axis: %5d | y-Axis: %5d", tumEventGetMouseX(), tumEventGetMouseY());
+    tumDrawText(values, 10, DEFAULT_FONT_SIZE, Black);
 }
 
 void vBigDrawingTask(void *pvParameters){
@@ -258,6 +267,7 @@ void vBigDrawingTask(void *pvParameters){
 
         vCheckMouseState(button_counter);
         last_change = vButtonPresses(button_counter, last_change);
+        vPrintMouseValues();
 
         tumDrawUpdateScreen();
         vTaskDelay((TickType_t)50);
