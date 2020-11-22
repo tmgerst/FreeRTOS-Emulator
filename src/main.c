@@ -26,6 +26,7 @@
 #define RADIUS_FOR_CIRCLE_MOVEMENT 80
 #define APPROX_OFFSET_FOR_TEXT_DEFLECTION 15    // Offset to prevent text from going a little bit into the screen wall, 
                                                 // since text box is slightly wider than the actual width of the text
+#define DEBOUNCE_DELAY 200
 
 // static TaskHandle_t DemoTask = NULL;
 static TaskHandle_t BigDrawingTask = NULL;
@@ -163,34 +164,56 @@ coord_t update_text_position(coord_t current_position, int offset_per_call, int 
     return new_position;
 }
 
-// Takes in a pointer to an integer array with size 4, since there are four buttons to be checked
-void vButtonPresses(int* button_counter){
-    static char button_buffer[40] = { 0 };
-
+void vCheckMouseState(int* button_counter){
     signed char mouse_state_left = tumEventGetMouseLeft();
-    if (mouse_state_left != 0) {    // messy, maybe review this
+    if (mouse_state_left != 0) {
         *button_counter = 0;
         *(button_counter+1) = 0;
         *(button_counter+2) = 0;
         *(button_counter+3) = 0;
     }
-    else{
-        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+}
 
-            if (buttons.buttons[KEYCODE(A)]) { (*button_counter)++; }
-            if (buttons.buttons[KEYCODE(B)]) { (*(button_counter+1))++; }
-            if (buttons.buttons[KEYCODE(C)]) { (*(button_counter+2))++; }
-            if (buttons.buttons[KEYCODE(D)]) { (*(button_counter+3))++; }
+// Takes in a pointer to an integer array with size 4, since there are four buttons to be checked
+TickType_t vButtonPresses(int* button_counter, TickType_t last_change){
+    static char button_buffer[40] = { 0 };
 
-            sprintf(button_buffer, "A: %d | B: %d | C: %d | D: %d",
-                    *button_counter,
-                    *(button_counter+1),
-                    *(button_counter+2),
-                    *(button_counter+3));
-            xSemaphoreGive(buttons.lock);
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
+
+        if (buttons.buttons[KEYCODE(A)]) {
+            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+                (*button_counter)++;
+                last_change = xTaskGetTickCount();
+            }
         }
+        if (buttons.buttons[KEYCODE(B)]) { 
+            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+                (*(button_counter+1))++;
+                last_change = xTaskGetTickCount();
+            }
+        }
+        if (buttons.buttons[KEYCODE(C)]) {
+            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+                (*(button_counter+2))++;
+                last_change = xTaskGetTickCount();
+            }
+        }
+        if (buttons.buttons[KEYCODE(D)]) {
+            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+                (*(button_counter+3))++;
+                last_change = xTaskGetTickCount();
+            }
+        }
+
+        sprintf(button_buffer, "A: %d | B: %d | C: %d | D: %d",
+                *button_counter,
+                *(button_counter+1),
+                *(button_counter+2),
+                *(button_counter+3));
+        xSemaphoreGive(buttons.lock);
     }
     tumDrawText(button_buffer, 10, DEFAULT_FONT_SIZE, Black);
+    return last_change;
 }
 
 void vBigDrawingTask(void *pvParameters){
@@ -205,6 +228,7 @@ void vBigDrawingTask(void *pvParameters){
     coord_t position_moving_text = {SCREEN_WIDTH/2-moving_text_width/2, 0.125*SCREEN_HEIGHT-DEFAULT_FONT_SIZE/2};
 
     int button_counter[4] = {0, 0, 0, 0}; // Initializing button counter
+    TickType_t last_change = xTaskGetTickCount();
 
     // text moves to the right: direction = 1
     // text moves to the left: direction = -1
@@ -232,7 +256,8 @@ void vBigDrawingTask(void *pvParameters){
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
         tumDrawText(moving_text, position_moving_text.x, position_moving_text.y, Orange);
 
-        vButtonPresses(button_counter);
+        vCheckMouseState(button_counter);
+        last_change = vButtonPresses(button_counter, last_change);
 
         tumDrawUpdateScreen();
         vTaskDelay((TickType_t)50);
