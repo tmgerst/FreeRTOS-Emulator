@@ -26,7 +26,10 @@
 #define RADIUS_FOR_CIRCLE_MOVEMENT 80
 #define APPROX_OFFSET_FOR_TEXT_DEFLECTION 15    // Offset to prevent text from going a little bit into the screen wall, 
                                                 // since text box is slightly wider than the actual width of the text
+#define HARMONIC_MOVEMENT_CONSTANT 1
 #define DEBOUNCE_DELAY 200
+#define MOUSE_MOVEMENT_DElAY 200
+#define OFFSET_ATTENUATION 0.2                  // attenuation for shaking the screen
 
 // static TaskHandle_t DemoTask = NULL;
 static TaskHandle_t BigDrawingTask = NULL;
@@ -104,10 +107,10 @@ void vDemoTask(void *pvParameters)
     }
 }
 
-void vDrawStaticItems(void){
-        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT-25},     // 18 as offset: all points of the triangle are distanced
-                             {0.5*SCREEN_WIDTH-18, 0.5*SCREEN_HEIGHT+18},           // approximately 25 pixels from the center of the screen
-                             {0.5*SCREEN_WIDTH+18, 0.5*SCREEN_HEIGHT+18}} ;         // 25 = sqrt(2a²) --> a ~ 18
+void vDrawStaticItems(int* offset_values){
+        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH+*offset_values, 0.5*SCREEN_HEIGHT-25+*(offset_values+1)},     // 18 as offset: all points of the triangle are distanced
+                             {0.5*SCREEN_WIDTH-18+*offset_values, 0.5*SCREEN_HEIGHT+18+*(offset_values+1)},           // approximately 25 pixels from the center of the screen
+                             {0.5*SCREEN_WIDTH+18+*offset_values, 0.5*SCREEN_HEIGHT+18+*(offset_values+1)}} ;         // 25 = sqrt(2a²) --> a ~ 18
 
         static char not_moving_text[70] = "A circle, a triangle and a square walk into a bar ...";
         static int not_moving_text_width = 0;
@@ -117,18 +120,18 @@ void vDrawStaticItems(void){
         if (!tumGetTextSize((char *)not_moving_text,
                             &not_moving_text_width, NULL))
             tumDrawText(not_moving_text,
-                        SCREEN_WIDTH / 2 -
-                        not_moving_text_width / 2,
-                        0.875*SCREEN_HEIGHT - DEFAULT_FONT_SIZE / 2,
+                        SCREEN_WIDTH/2 -
+                        not_moving_text_width/2 + *offset_values,
+                        0.875*SCREEN_HEIGHT - DEFAULT_FONT_SIZE/2 + *(offset_values+1),
                         Orange);
 
         tumDrawTriangle(triangle_points, Silver);
 }
 
 // Calculates coordinates for circular movement around the center of the screen
-coord_t update_shape_positions(int radius, double radian){
-    int x_coord = SCREEN_WIDTH/2 + radius * cos(radian);
-    int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian);
+coord_t update_shape_positions(int radius, double radian, int* offset_values){
+    int x_coord = SCREEN_WIDTH/2 + radius * cos(radian) + *offset_values;
+    int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian) + *(offset_values+1);
     coord_t new_positions = {x_coord, y_coord};
     return new_positions;
 }
@@ -152,7 +155,7 @@ int invert_direction_on_collision(char* text, coord_t current_position, int offs
     // printf("%i\n", future_position);
     
     // if text collides with screen boundaries, invert the direction
-    if (future_position > SCREEN_WIDTH || future_position < 15){
+    if (future_position > SCREEN_WIDTH-APPROX_OFFSET_FOR_TEXT_DEFLECTION || future_position < APPROX_OFFSET_FOR_TEXT_DEFLECTION){
         direction = direction*(-1);
     }
     return direction;
@@ -175,36 +178,36 @@ void vCheckMouseState(int* button_counter){
 }
 
 // Takes in a pointer to an integer array with size 4, since there are four buttons to be checked
-TickType_t vButtonPresses(int* button_counter, TickType_t last_change){
+TickType_t vButtonPresses(int* button_counter, TickType_t last_button_change, int* offset_values){
     static char button_buffer[40] = { 0 };
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
         // increment counter A if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(A)]) {
-            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+            if(xTaskGetTickCount()-last_button_change > DEBOUNCE_DELAY) {
                 (*button_counter)++;
-                last_change = xTaskGetTickCount();
+                last_button_change = xTaskGetTickCount();
             }
         }
         // increment counter B if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(B)]) { 
-            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+            if(xTaskGetTickCount()-last_button_change > DEBOUNCE_DELAY) {
                 (*(button_counter+1))++;
-                last_change = xTaskGetTickCount();
+                last_button_change = xTaskGetTickCount();
             }
         }
         // increment counter C if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(C)]) {
-            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+            if(xTaskGetTickCount()-last_button_change > DEBOUNCE_DELAY) {
                 (*(button_counter+2))++;
-                last_change = xTaskGetTickCount();
+                last_button_change = xTaskGetTickCount();
             }
         }
         // increment counter D if time is greater than debounce delay
         if (buttons.buttons[KEYCODE(D)]) {
-            if(xTaskGetTickCount()-last_change > DEBOUNCE_DELAY) {
+            if(xTaskGetTickCount()-last_button_change > DEBOUNCE_DELAY) {
                 (*(button_counter+3))++;
-                last_change = xTaskGetTickCount();
+                last_button_change = xTaskGetTickCount();
             }
         }
 
@@ -215,14 +218,20 @@ TickType_t vButtonPresses(int* button_counter, TickType_t last_change){
                 *(button_counter+3));
         xSemaphoreGive(buttons.lock);
     }
-    tumDrawText(button_buffer, 10, 2*DEFAULT_FONT_SIZE, Black);
-    return last_change;
+    tumDrawText(button_buffer, 10+ *(offset_values), 2*DEFAULT_FONT_SIZE+ *(offset_values+1), Black);
+    return last_button_change;
 }
 
-void vPrintMouseValues(void) {
+void vPrintMouseValues(int* offset_values) {
     static char values[20] = {0};
-    sprintf(values, "x-Axis: %5d | y-Axis: %5d", tumEventGetMouseX(), tumEventGetMouseY());
-    tumDrawText(values, 10, DEFAULT_FONT_SIZE, Black);
+    int x_position = tumEventGetMouseX();
+    int y_position = tumEventGetMouseY();
+
+    *offset_values = (x_position - SCREEN_WIDTH/2) * OFFSET_ATTENUATION;
+    *(offset_values+1) = (y_position - SCREEN_HEIGHT/2) * OFFSET_ATTENUATION;
+
+    sprintf(values, "x-Axis: %5d | y-Axis: %5d", x_position, y_position);
+    tumDrawText(values, 10+(*offset_values), DEFAULT_FONT_SIZE+ *(offset_values+1), Black);
 }
 
 void vBigDrawingTask(void *pvParameters){
@@ -236,13 +245,16 @@ void vBigDrawingTask(void *pvParameters){
     coord_t position_square = {0.625*SCREEN_WIDTH-25, SCREEN_HEIGHT/2};
     coord_t position_moving_text = {SCREEN_WIDTH/2-moving_text_width/2, 0.125*SCREEN_HEIGHT-DEFAULT_FONT_SIZE/2};
 
+    // Initializing the offset values for shaking the screen with the mouse
+    int offset_values[2] = {0, 0};
+
     int button_counter[4] = {0, 0, 0, 0}; // Initializing button counter
-    TickType_t last_change = xTaskGetTickCount();
+    TickType_t last_button_change = xTaskGetTickCount();
 
     // text moves to the right: direction = 1
     // text moves to the left: direction = -1
     int direction = 1;
-    int offset_per_call = 10;
+    int offset_per_call = HARMONIC_MOVEMENT_CONSTANT*2;
     double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
 
     tumDrawBindThread();
@@ -252,25 +264,26 @@ void vBigDrawingTask(void *pvParameters){
         xGetButtonInput(); // Update global input        
 
         tumDrawClear(White);
-        vDrawStaticItems();
+
+        vPrintMouseValues(offset_values);     
+        vCheckMouseState(button_counter);
+        last_button_change = vButtonPresses(button_counter, last_button_change, offset_values);
+
+        vDrawStaticItems(offset_values);
 
         direction = invert_direction_on_collision(moving_text, position_moving_text, offset_per_call, direction);
-        radian = radian - 0.05*M_PI; // update radian for circular movement
+        radian = radian - (HARMONIC_MOVEMENT_CONSTANT/(double)100)*M_PI; // update radian for circular movement
 
-        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian);
-        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI); // +M_PI: square should be on opposite side of circle
+        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian, offset_values);
+        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI, offset_values); // +M_PI: square should be on opposite side of circle
         position_moving_text = update_text_position(position_moving_text, offset_per_call, direction);
 
         tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
-        tumDrawText(moving_text, position_moving_text.x, position_moving_text.y, Orange);
-
-        vCheckMouseState(button_counter);
-        last_change = vButtonPresses(button_counter, last_change);
-        vPrintMouseValues();
+        tumDrawText(moving_text, position_moving_text.x+(*offset_values), position_moving_text.y+*(offset_values+1), Orange);
 
         tumDrawUpdateScreen();
-        vTaskDelay((TickType_t)50);
+        vTaskDelay((TickType_t)HARMONIC_MOVEMENT_CONSTANT*10);
     }
 }
 
