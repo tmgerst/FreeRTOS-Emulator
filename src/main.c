@@ -107,10 +107,19 @@ void vDemoTask(void *pvParameters)
     }
 }
 
-void vDrawStaticItems(int* offset_values){
-        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH+*offset_values, 0.5*SCREEN_HEIGHT-25+*(offset_values+1)},     // 18 as offset: all points of the triangle are distanced
-                             {0.5*SCREEN_WIDTH-18+*offset_values, 0.5*SCREEN_HEIGHT+18+*(offset_values+1)},           // approximately 25 pixels from the center of the screen
-                             {0.5*SCREEN_WIDTH+18+*offset_values, 0.5*SCREEN_HEIGHT+18+*(offset_values+1)}} ;         // 25 = sqrt(2a²) --> a ~ 18
+// Calculates the offset of the mouse position relative to the center of the screen.
+coord_t offsetDueToMouse(double attenuation){
+    int x_offset = (tumEventGetMouseX() - SCREEN_WIDTH/2) * attenuation;
+    int y_offset = (tumEventGetMouseY() - SCREEN_HEIGHT/2) * attenuation;
+    coord_t mouse_offset = {x_offset, y_offset};
+    return mouse_offset;
+}
+
+// Draws static triangle and text and updates their position according to the mouse movement.
+void vDrawStaticItems(coord_t mouse_offset){
+        coord_t triangle_points[3] = {{0.5*SCREEN_WIDTH+mouse_offset.x, 0.5*SCREEN_HEIGHT-25+mouse_offset.y},     // 18 as offset: all points of the triangle are distanced
+                             {0.5*SCREEN_WIDTH-18+mouse_offset.x, 0.5*SCREEN_HEIGHT+18+mouse_offset.y},           // approximately 25 pixels from the center of the screen
+                             {0.5*SCREEN_WIDTH+18+mouse_offset.x, 0.5*SCREEN_HEIGHT+18+mouse_offset.y}} ;         // 25 = sqrt(2a²) --> a ~ 18
 
         static char not_moving_text[70] = "A circle, a triangle and a square walk into a bar ...";
         static int not_moving_text_width = 0;
@@ -121,17 +130,17 @@ void vDrawStaticItems(int* offset_values){
                             &not_moving_text_width, NULL))
             tumDrawText(not_moving_text,
                         SCREEN_WIDTH/2 -
-                        not_moving_text_width/2 + *offset_values,
-                        0.875*SCREEN_HEIGHT - DEFAULT_FONT_SIZE/2 + *(offset_values+1),
+                        not_moving_text_width/2 + mouse_offset.x,
+                        0.875*SCREEN_HEIGHT - DEFAULT_FONT_SIZE/2 + mouse_offset.y,
                         Orange);
 
         tumDrawTriangle(triangle_points, Silver);
 }
 
-// Calculates coordinates for circular movement around the center of the screen
-coord_t update_shape_positions(int radius, double radian, int* offset_values){
-    int x_coord = SCREEN_WIDTH/2 + radius * cos(radian) + *offset_values;
-    int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian) + *(offset_values+1);
+// Calculates coordinates for circular movement around the center of the screen.
+coord_t update_shape_positions(int radius, double radian, coord_t mouse_offset){
+    int x_coord = SCREEN_WIDTH/2 + radius * cos(radian) + mouse_offset.x;
+    int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian) + mouse_offset.y;
     coord_t new_positions = {x_coord, y_coord};
     return new_positions;
 }
@@ -161,12 +170,14 @@ int invert_direction_on_collision(char* text, coord_t current_position, int offs
     return direction;
 }
 
-coord_t update_text_position(coord_t current_position, int offset_per_call, int direction){
-    current_position.x = current_position.x + offset_per_call*direction;
+// Calculates the next position for the moving text.
+coord_t update_text_position(coord_t current_position, int movement_per_call, int direction){
+    current_position.x = current_position.x + movement_per_call * direction;
     coord_t new_position = {current_position.x, current_position.y};    
     return new_position;
 }
 
+// Checks if left mouse button is pressed. If so, resets the button counters.
 void vCheckMouseState(int* button_counter){
     signed char mouse_state_left = tumEventGetMouseLeft();
     if (mouse_state_left != 0) {
@@ -177,8 +188,8 @@ void vCheckMouseState(int* button_counter){
     }
 }
 
-// Takes in a pointer to an integer array with size 4, since there are four buttons to be checked
-TickType_t vButtonPresses(int* button_counter, TickType_t last_button_change, int* offset_values){
+// Increments button counters if one of them is pressed and prints counter values to the screen. Returns a Ticktype that acts as the new value for the last button change.
+TickType_t vButtonPresses(int* button_counter, TickType_t last_button_change, coord_t mouse_offset){
     static char button_buffer[40] = { 0 };
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
@@ -218,20 +229,17 @@ TickType_t vButtonPresses(int* button_counter, TickType_t last_button_change, in
                 *(button_counter+3));
         xSemaphoreGive(buttons.lock);
     }
-    tumDrawText(button_buffer, 10+ *(offset_values), 2*DEFAULT_FONT_SIZE+ *(offset_values+1), Black);
+    tumDrawText(button_buffer, 10+mouse_offset.x, 2*DEFAULT_FONT_SIZE+mouse_offset.y, Black);
     return last_button_change;
 }
 
-void vPrintMouseValues(int* offset_values) {
+void vPrintMouseValues(coord_t mouse_offset) {
     static char values[20] = {0};
     int x_position = tumEventGetMouseX();
     int y_position = tumEventGetMouseY();
 
-    *offset_values = (x_position - SCREEN_WIDTH/2) * OFFSET_ATTENUATION;
-    *(offset_values+1) = (y_position - SCREEN_HEIGHT/2) * OFFSET_ATTENUATION;
-
     sprintf(values, "x-Axis: %5d | y-Axis: %5d", x_position, y_position);
-    tumDrawText(values, 10+(*offset_values), DEFAULT_FONT_SIZE+ *(offset_values+1), Black);
+    tumDrawText(values, 10+mouse_offset.x, DEFAULT_FONT_SIZE+mouse_offset.y, Black);
 }
 
 void vBigDrawingTask(void *pvParameters){
@@ -246,7 +254,7 @@ void vBigDrawingTask(void *pvParameters){
     coord_t position_moving_text = {SCREEN_WIDTH/2-moving_text_width/2, 0.125*SCREEN_HEIGHT-DEFAULT_FONT_SIZE/2};
 
     // Initializing the offset values for shaking the screen with the mouse
-    int offset_values[2] = {0, 0};
+    coord_t mouse_offset = {0, 0};
 
     int button_counter[4] = {0, 0, 0, 0}; // Initializing button counter
     TickType_t last_button_change = xTaskGetTickCount();
@@ -254,7 +262,7 @@ void vBigDrawingTask(void *pvParameters){
     // text moves to the right: direction = 1
     // text moves to the left: direction = -1
     int direction = 1;
-    int offset_per_call = HARMONIC_MOVEMENT_CONSTANT*2;
+    int movement_per_call = HARMONIC_MOVEMENT_CONSTANT*2;
     double radian = -M_PI; // start value for circle radian; square radian is this value + M_PI
 
     tumDrawBindThread();
@@ -265,22 +273,24 @@ void vBigDrawingTask(void *pvParameters){
 
         tumDrawClear(White);
 
-        vPrintMouseValues(offset_values);     
+        mouse_offset = offsetDueToMouse(OFFSET_ATTENUATION);
+
+        vPrintMouseValues(mouse_offset);     
         vCheckMouseState(button_counter);
-        last_button_change = vButtonPresses(button_counter, last_button_change, offset_values);
+        last_button_change = vButtonPresses(button_counter, last_button_change, mouse_offset);
 
-        vDrawStaticItems(offset_values);
+        vDrawStaticItems(mouse_offset);
 
-        direction = invert_direction_on_collision(moving_text, position_moving_text, offset_per_call, direction);
+        direction = invert_direction_on_collision(moving_text, position_moving_text, movement_per_call, direction);
         radian = radian - (HARMONIC_MOVEMENT_CONSTANT/(double)100)*M_PI; // update radian for circular movement
 
-        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian, offset_values);
-        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI, offset_values); // +M_PI: square should be on opposite side of circle
-        position_moving_text = update_text_position(position_moving_text, offset_per_call, direction);
+        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian, mouse_offset);
+        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI, mouse_offset); // +M_PI: square should be on opposite side of circle
+        position_moving_text = update_text_position(position_moving_text, movement_per_call, direction);
 
         tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
-        tumDrawText(moving_text, position_moving_text.x+(*offset_values), position_moving_text.y+*(offset_values+1), Orange);
+        tumDrawText(moving_text, position_moving_text.x+mouse_offset.x, position_moving_text.y+mouse_offset.y, Orange);
 
         tumDrawUpdateScreen();
         vTaskDelay((TickType_t)HARMONIC_MOVEMENT_CONSTANT*10);
