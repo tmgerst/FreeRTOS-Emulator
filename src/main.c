@@ -31,8 +31,28 @@
 #define MOUSE_MOVEMENT_DElAY 200
 #define OFFSET_ATTENUATION 0.2                  // attenuation for shaking the screen
 
-// static TaskHandle_t DemoTask = NULL;
-static TaskHandle_t BigDrawingTask = NULL;
+
+#define STATE_MACHINE_QUEUE_LENGTH 1
+#define NUMBER_OF_STATES 3
+#define STATE_CHANGE_DELAY 150
+
+#define STARTING_STATE 0
+#define NEXT_STATE 1
+
+#define STATE_EX_TWO 0
+#define STATE_EX_THREE 1
+#define STATE_EX_FOUR 2
+
+//static TaskHandle_t BigDrawingTask = NULL;
+static TaskHandle_t StateMachine = NULL;
+static TaskHandle_t BufferSwapTask = NULL;
+static TaskHandle_t FirstScreenTask = NULL;
+static TaskHandle_t SecondScreenTask = NULL;
+static TaskHandle_t ThirdScreenTask = NULL;
+
+static SemaphoreHandle_t DrawSignal = NULL;
+static SemaphoreHandle_t ScreenLock = NULL;
+static QueueHandle_t StateMachineQueue = NULL;
 
 typedef struct buttons_buffer {
     unsigned char buttons[SDL_NUM_SCANCODES];
@@ -40,6 +60,8 @@ typedef struct buttons_buffer {
 } buttons_buffer_t;
 
 static buttons_buffer_t buttons = { 0 };
+
+const unsigned char next_state_signal = NEXT_STATE;
 
 void xGetButtonInput(void)
 {
@@ -51,61 +73,7 @@ void xGetButtonInput(void)
 
 #define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
 
-void vDemoTask(void *pvParameters)
-{
-    // structure to store time retrieved from Linux kernel
-    static struct timespec the_time;
-    static char our_time_string[100];
-    static int our_time_strings_width = 0;
-
-    // Needed such that Gfx library knows which thread controlls drawing
-    // Only one thread can call tumDrawUpdateScreen while and thread can call
-    // the drawing functions to draw objects. This is a limitation of the SDL
-    // backend.
-    tumDrawBindThread();
-
-    while (1) {
-        tumEventFetchEvents(FETCH_EVENT_NONBLOCK); // Query events backend for new events, ie. button presses
-        xGetButtonInput(); // Update global input
-
-        // `buttons` is a global shared variable and as such needs to be
-        // guarded with a mutex, mutex must be obtained before accessing the
-        // resource and given back when you're finished. If the mutex is not
-        // given back then no other task can access the reseource.
-        if (xSemaphoreTake(buttons.lock, 0) == pdTRUE) {
-            if (buttons.buttons[KEYCODE(
-                                    Q)]) { // Equiv to SDL_SCANCODE_Q
-                exit(EXIT_SUCCESS);
-            }
-            xSemaphoreGive(buttons.lock);
-        }
-
-        tumDrawClear(White); // Clear screen
-
-        clock_gettime(CLOCK_REALTIME,
-                      &the_time); // Get kernel real time
-
-        // Format our string into our char array
-        sprintf(our_time_string,
-                "There has been %ld seconds since the Epoch. Press Q to quit",
-                (long int)the_time.tv_sec);
-
-        // Get the width of the string on the screen so we can center it
-        // Returns 0 if width was successfully obtained
-        if (!tumGetTextSize((char *)our_time_string,
-                            &our_time_strings_width, NULL))
-            tumDrawText(our_time_string,
-                        SCREEN_WIDTH / 2 -
-                        our_time_strings_width / 2,
-                        SCREEN_HEIGHT / 2 - DEFAULT_FONT_SIZE / 2,
-                        TUMBlue);
-
-        tumDrawUpdateScreen(); // Refresh the screen to draw string
-
-        // Basic sleep of 1000 milliseconds
-        vTaskDelay((TickType_t)1000);
-    }
-}
+// ------------------- Code for Exercise 2 -----------------------------------------------------------------------------------------------
 
 // Calculates the offset of the mouse position relative to the center of the screen.
 coord_t offsetDueToMouse(double attenuation){
@@ -297,6 +265,184 @@ void vBigDrawingTask(void *pvParameters){
     }
 }
 
+// ----------------------------------- End of Code for Exercise 2 -----------------------------------------------------------------------
+
+// ----------------------------------- Code for Exercise 3 ------------------------------------------------------------------------------
+
+void vCheckForStateInput(void){
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
+        if (buttons.buttons[KEYCODE(E)]){
+            buttons.buttons[KEYCODE(E)] = 0;
+            if(StateMachineQueue){
+                xQueueSend(StateMachineQueue, &next_state_signal, 0);
+                xSemaphoreGive(buttons.lock);
+            }
+        }
+    }
+    xSemaphoreGive(buttons.lock);
+}
+
+void changingStateAfterInput(unsigned char *state, unsigned char queue_input){
+    if(*state+queue_input >= NUMBER_OF_STATES){
+        *state = STATE_EX_TWO;
+    }
+    else{
+        *state = *state + queue_input;
+    }
+}
+
+void vSequentialStateMachine(void *pvParameters){
+    unsigned char current_state = STARTING_STATE;
+    unsigned char queue_input = 0;
+    unsigned char change_state = 1;
+
+    TickType_t last_state_change = xTaskGetTickCount();
+
+    while(1){
+        if(change_state != 0){
+            goto state_handling;
+        }
+
+        if (StateMachineQueue){
+            if (xQueueReceive(StateMachineQueue, &queue_input, portMAX_DELAY) == pdTRUE){
+                if (xTaskGetTickCount() - last_state_change > STATE_CHANGE_DELAY){
+                    changingStateAfterInput(&current_state, queue_input);
+                    change_state = 1;
+                    last_state_change = xTaskGetTickCount();
+                }
+            }
+        }
+
+state_handling:
+        if(StateMachineQueue){
+            if(change_state != 0){
+                switch(current_state){
+                    case STATE_EX_TWO:
+                        vTaskSuspend(SecondScreenTask);
+                        vTaskSuspend(ThirdScreenTask);
+                        vTaskResume(FirstScreenTask);
+                        break;
+                    case STATE_EX_THREE:
+                        vTaskSuspend(FirstScreenTask);
+                        vTaskSuspend(ThirdScreenTask);
+                        vTaskResume(SecondScreenTask);
+                        break;
+                    case STATE_EX_FOUR:
+                        vTaskSuspend(FirstScreenTask);
+                        vTaskSuspend(SecondScreenTask);
+                        vTaskResume(ThirdScreenTask);
+                        break;
+                    default:
+                        break;
+                }
+                change_state = 0;
+            }
+        }
+    }
+}
+
+void vSwapBuffers(void *pvParameters)
+{
+    TickType_t xLastWakeTime;
+    xLastWakeTime = xTaskGetTickCount();
+    const TickType_t frameratePeriod = 20;
+
+    tumDrawBindThread(); // Setup Rendering handle with correct GL context
+
+    while (1) {
+        if (xSemaphoreTake(ScreenLock, portMAX_DELAY) == pdTRUE) {
+            tumDrawUpdateScreen();
+            tumEventFetchEvents(FETCH_EVENT_BLOCK);
+            xSemaphoreGive(ScreenLock);
+            xSemaphoreGive(DrawSignal);
+            vTaskDelayUntil(&xLastWakeTime,
+                            pdMS_TO_TICKS(frameratePeriod));
+        }
+    }
+}
+
+void vFirstScreenTask(void *pvParameter){  
+
+    char first_text[30] = "First Task";
+    int first_text_width = 0;
+    tumGetTextSize((char *) first_text, &first_text_width, NULL); 
+
+    while(1){
+        if (DrawSignal){
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE) {
+
+                tumEventFetchEvents(FETCH_EVENT_BLOCK | FETCH_EVENT_NO_GL_CHECK);
+                xGetButtonInput(); // Update global button data
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
+                
+                tumDrawClear(White);
+
+                if (!tumGetTextSize((char *)first_text, &first_text_width, NULL)){
+                    tumDrawText(first_text, SCREEN_WIDTH/2 - first_text_width/2, SCREEN_HEIGHT/2 - DEFAULT_FONT_SIZE/2, TUMBlue);
+                }
+
+                xSemaphoreGive(ScreenLock);
+                vCheckForStateInput();
+            }
+        }
+    }
+}
+
+void vSecondScreenTask(void *pvParameters){
+
+    char second_text[30] = "Second Task";
+    int second_text_width = 0;
+    tumGetTextSize((char *) second_text, &second_text_width, NULL); 
+
+    while(1){
+        if (DrawSignal){
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE) {
+
+                tumEventFetchEvents(FETCH_EVENT_BLOCK | FETCH_EVENT_NO_GL_CHECK);
+                xGetButtonInput(); // Update global button data
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
+                
+                tumDrawClear(White);
+
+                if (!tumGetTextSize((char *)second_text, &second_text_width, NULL)){
+                    tumDrawText(second_text, SCREEN_WIDTH/2 - second_text_width/2, SCREEN_HEIGHT/2 - DEFAULT_FONT_SIZE/2, Lime);
+                }
+
+                xSemaphoreGive(ScreenLock);
+                vCheckForStateInput();
+            }
+        }
+    }
+}
+
+void vThirdScreenTask(void *pvParameters){
+
+    char third_text[30] = "Third Task";
+    int third_text_width = 0;
+    tumGetTextSize((char *) third_text, &third_text_width, NULL); 
+
+    while(1){
+        if (DrawSignal){
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE) {
+
+                tumEventFetchEvents(FETCH_EVENT_BLOCK | FETCH_EVENT_NO_GL_CHECK);
+                xGetButtonInput(); // Update global button data
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
+                
+                tumDrawClear(White);
+
+                if (!tumGetTextSize((char *)third_text, &third_text_width, NULL)){
+                    tumDrawText(third_text, SCREEN_WIDTH/2 - third_text_width/2, SCREEN_HEIGHT/2 - DEFAULT_FONT_SIZE/2, Orange);
+                }
+
+                xSemaphoreGive(ScreenLock);
+                vCheckForStateInput();
+            }
+        }
+    }
+}
+
+
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
@@ -324,35 +470,81 @@ int main(int argc, char *argv[])
         goto err_buttons_lock;
     }
 
-    // Demo Task not needed currently
-    /*
-    if (xTaskCreate(vDemoTask, "DemoTask", mainGENERIC_STACK_SIZE * 2, NULL,
-                    mainGENERIC_PRIORITY, &DemoTask) != pdPASS) {
-        goto err_demotask;
+    DrawSignal = xSemaphoreCreateBinary(); // Screen buffer locking
+    if (!DrawSignal) {
+        PRINT_ERROR("Failed to create draw signal");
+        goto err_draw_signal;
     }
-    */
 
-    
-    if (xTaskCreate(vBigDrawingTask, "BigDrawingTask", mainGENERIC_STACK_SIZE * 2, NULL,
-                    mainGENERIC_PRIORITY, &BigDrawingTask) != pdPASS) {
-        goto err_big_drawing;
+    ScreenLock = xSemaphoreCreateMutex();
+    if (!ScreenLock) {
+        PRINT_ERROR("Failed to create screen lock");
+        goto err_screen_lock;
     }
+
+    // Message sending
+    StateMachineQueue = xQueueCreate(STATE_MACHINE_QUEUE_LENGTH, sizeof(unsigned char));
+    if (!StateMachineQueue) {
+        PRINT_ERROR("Could not open state queue");
+        goto err_state_machine_queue;
+    }
+    
+    if (xTaskCreate(vSequentialStateMachine, "StateMachine", mainGENERIC_STACK_SIZE * 2, NULL,
+                    configMAX_PRIORITIES-1, &StateMachine) != pdPASS) {
+        goto err_state_machine;
+    }
+
+    if (xTaskCreate(vSwapBuffers, "BufferSwapTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    configMAX_PRIORITIES, &BufferSwapTask) != pdPASS) {
+        goto err_buffer_swap_task;
+    }
+
+    if (xTaskCreate(vFirstScreenTask, "FirstScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY, &FirstScreenTask) != pdPASS) {
+        goto err_first_screen_task;
+    }
+
+    if (xTaskCreate(vSecondScreenTask, "SecondScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY, &SecondScreenTask) != pdPASS) {
+        goto err_second_screen_task;
+    }
+
+    if (xTaskCreate(vThirdScreenTask, "ThirdScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY, &ThirdScreenTask) != pdPASS) {
+        goto err_third_screen_task;
+    }
+
 
     vTaskStartScheduler();
 
     return EXIT_SUCCESS;
 
-// err_demotask:
-err_big_drawing:
-    vTaskDelete(vBigDrawingTask);
-    vSemaphoreDelete(buttons.lock);
+// Exits in reverse order to init
+err_third_screen_task:
+    vTaskDelete(ThirdScreenTask);
+err_second_screen_task:
+    vTaskDelete(SecondScreenTask);
+err_first_screen_task:
+    vTaskDelete(FirstScreenTask);
+err_buffer_swap_task:
+    vTaskDelete(BufferSwapTask);
+err_state_machine:
+    vTaskDelete(StateMachine);
+err_state_machine_queue:
+    vQueueDelete(StateMachineQueue);
+err_screen_lock:
+    vSemaphoreDelete(ScreenLock);
+err_draw_signal:
+    vSemaphoreDelete(DrawSignal);
 err_buttons_lock:
-    tumSoundExit();
+    vSemaphoreDelete(buttons.lock);
 err_init_audio:
-    tumEventExit();
+    tumSoundExit();
 err_init_events:
-    tumDrawExit();
+    tumEventExit();
 err_init_drawing:
+    tumDrawExit();
+
     return EXIT_FAILURE;
 }
 
