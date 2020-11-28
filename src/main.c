@@ -138,7 +138,7 @@ void vDrawStaticItems(coord_t mouse_offset){
 }
 
 // Calculates coordinates for circular movement around the center of the screen.
-coord_t update_shape_positions(int radius, double radian, coord_t mouse_offset){
+coord_t updateShapePositions(int radius, double radian, coord_t mouse_offset){
     int x_coord = SCREEN_WIDTH/2 + radius * cos(radian) + mouse_offset.x;
     int y_coord = SCREEN_HEIGHT/2 - radius * sin(radian) + mouse_offset.y;
     coord_t new_positions = {x_coord, y_coord};
@@ -146,7 +146,7 @@ coord_t update_shape_positions(int radius, double radian, coord_t mouse_offset){
 }
 
 // Checks if the moving text has hit a screen boundary. If so, the direction of movement is inverted.
-int invert_direction_on_collision(char* text, coord_t current_position, int offset_per_call, int direction){
+int invertDirectionOnCollision(char* text, coord_t current_position, int offset_per_call, int direction){
 
     int moving_text_width = 0;
     tumGetTextSize((char *) text, &moving_text_width, NULL);
@@ -171,7 +171,7 @@ int invert_direction_on_collision(char* text, coord_t current_position, int offs
 }
 
 // Calculates the next position for the moving text.
-coord_t update_text_position(coord_t current_position, int movement_per_call, int direction){
+coord_t updateTextPosition(coord_t current_position, int movement_per_call, int direction){
     current_position.x = current_position.x + movement_per_call * direction;
     coord_t new_position = {current_position.x, current_position.y};    
     return new_position;
@@ -281,12 +281,12 @@ void vBigDrawingTask(void *pvParameters){
 
         vDrawStaticItems(mouse_offset);
 
-        direction = invert_direction_on_collision(moving_text, position_moving_text, movement_per_call, direction);
+        direction = invertDirectionOnCollision(moving_text, position_moving_text, movement_per_call, direction);
         radian = radian - (HARMONIC_MOVEMENT_CONSTANT/(double)100)*M_PI; // update radian for circular movement
 
-        position_circle = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian, mouse_offset);
-        position_square = update_shape_positions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI, mouse_offset); // +M_PI: square should be on opposite side of circle
-        position_moving_text = update_text_position(position_moving_text, movement_per_call, direction);
+        position_circle = updateShapePositions(RADIUS_FOR_CIRCLE_MOVEMENT, radian, mouse_offset);
+        position_square = updateShapePositions(RADIUS_FOR_CIRCLE_MOVEMENT, radian+M_PI, mouse_offset); // +M_PI: square should be on opposite side of circle
+        position_moving_text = updateTextPosition(position_moving_text, movement_per_call, direction);
 
         tumDrawCircle(position_circle.x, position_circle.y, 25, TUMBlue); 
         tumDrawFilledBox(position_square.x-25, position_square.y-25, 50, 50, Lime); // -25: offset for square, so that its center is circling with the movement radius
