@@ -27,7 +27,7 @@
 #define APPROX_OFFSET_FOR_TEXT_DEFLECTION 15    // Offset to prevent text from going a little bit into the screen wall, 
                                                 // since text box is slightly wider than the actual width of the text
 #define HARMONIC_MOVEMENT_CONSTANT 1
-#define DEBOUNCE_DELAY 200
+#define DEBOUNCE_DELAY 150
 #define MOUSE_MOVEMENT_DElAY 200
 #define OFFSET_ATTENUATION 0.2                  // attenuation for shaking the screen
 
@@ -57,6 +57,8 @@ static TaskHandle_t SecondScreenTask = NULL;
 static TaskHandle_t ThirdScreenTask = NULL;
 static TaskHandle_t BlueBlinkingCircleTask = NULL;
 static TaskHandle_t RedBlinkingCircleTask = NULL;
+static TaskHandle_t ButtonAHandlerTask = NULL;
+static TaskHandle_t ButtonBHandlerTask = NULL;
 
 static StaticTask_t xIdleTaskTCB;
 static StackType_t uxIdleTaskStack[ 1 ];
@@ -68,6 +70,8 @@ static SemaphoreHandle_t DrawSignal = NULL;
 static SemaphoreHandle_t ScreenLock = NULL;
 static SemaphoreHandle_t BlueCircleSignal = NULL;
 static SemaphoreHandle_t RedCircleSignal = NULL;
+static SemaphoreHandle_t ButtonASignal = NULL;
+
 static QueueHandle_t StateMachineQueue = NULL;
 
 typedef struct buttons_buffer {
@@ -76,6 +80,14 @@ typedef struct buttons_buffer {
 } buttons_buffer_t;
 
 static buttons_buffer_t buttons = { 0 };
+
+typedef struct counter {
+    int counter_a;
+    int counter_b;
+    SemaphoreHandle_t lock;
+} counter_t;
+
+static counter_t counter = { 0 };
 
 const unsigned char next_state_signal = NEXT_STATE;
 
@@ -353,17 +365,20 @@ state_handling:
                         vTaskSuspend(ThirdScreenTask);
 
                         vTaskResume(FirstScreenTask);
-                        vTaskResume(BlueBlinkingCircleTask);
+                        // vTaskResume(BlueBlinkingCircleTask);
+                        // vTaskResume(RedBlinkingCircleTask);
                         break;
                     case STATE_EX_THREE:
-                        vTaskSuspend(BlueBlinkingCircleTask);
+                        // vTaskSuspend(RedBlinkingCircleTask);
+                        // vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(ThirdScreenTask);
 
                         vTaskResume(SecondScreenTask);
                         break;
                     case STATE_EX_FOUR:
-                        vTaskSuspend(BlueBlinkingCircleTask);
+                        // vTaskSuspend(RedBlinkingCircleTask);
+                        // vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(SecondScreenTask);
 
@@ -444,11 +459,34 @@ void vDrawFPS(void)
         tumDrawText(str, SCREEN_WIDTH - text_width - 10, DEFAULT_FONT_SIZE, Black);
 }
 
+void vCheckForButtonInput(void){
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
+
+        // if A has been pressed, give binary semaphore
+        if(buttons.buttons[KEYCODE(A)]){
+            buttons.buttons[KEYCODE(A)] = 0;
+            if(ButtonASignal){
+                xSemaphoreGive(ButtonASignal); 
+                xSemaphoreGive(buttons.lock);
+            }
+        }
+        // if B has been pressed, send task notification
+        if (buttons.buttons[KEYCODE(B)]){
+            buttons.buttons[KEYCODE(B)] = 0;
+            xTaskNotifyGive(ButtonBHandlerTask);
+            xSemaphoreGive(buttons.lock);
+        }
+    }
+    xSemaphoreGive(buttons.lock);
+}
+
 void vFirstScreenTask(void *pvParameter){  
 
     char first_text[30] = "Blinking Circles";
     int first_text_width = 0;
     tumGetTextSize((char *) first_text, &first_text_width, NULL); 
+
+    char str[30] = {0};
 
     coord_t position_blue_circle = {0.25*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
     coord_t position_red_circle = {0.75*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
@@ -467,11 +505,21 @@ void vFirstScreenTask(void *pvParameter){
                 xGetButtonInput(); // Update global button data
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
+                // Draw white screen and headline
                 tumDrawClear(White);
                 if (!tumGetTextSize((char *)first_text, &first_text_width, NULL)){
                     tumDrawText(first_text, SCREEN_WIDTH/2 - first_text_width/2, SCREEN_HEIGHT/8 - DEFAULT_FONT_SIZE/2, TUMBlue);
                 }
 
+                // Check for input from either button A or button B
+                vCheckForButtonInput();
+                if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
+                    sprintf(str, "A: %3d | B: %3d", counter.counter_a, counter.counter_b);
+                }
+                xSemaphoreGive(counter.lock);
+                tumDrawText(str, SCREEN_WIDTH-90, SCREEN_HEIGHT-DEFAULT_FONT_SIZE-5, Black);   // Draw button counters
+
+                // Check for input from blue circle task and interpret it to draw or not draw the circle
                 if (BlueCircleSignal){
                     if (xSemaphoreTake(BlueCircleSignal, 0)){
                         if (blue_circle_drawn == 0){
@@ -483,6 +531,7 @@ void vFirstScreenTask(void *pvParameter){
                     }
                 }
 
+                // Check for input from red circle task and interpret it to draw or not draw the circle
                 if (RedCircleSignal){
                     if (xSemaphoreTake(RedCircleSignal, 0)){
                         if(red_circle_drawn == 0){
@@ -494,6 +543,7 @@ void vFirstScreenTask(void *pvParameter){
                     }
                 }
 
+                // if flags are set accordingly, draw the circles to the screen
                 if (blue_circle_drawn == 0){
                     tumDrawCircle(position_blue_circle.x, position_blue_circle.y, 25, TUMBlue);
                 }
@@ -597,6 +647,40 @@ void vRedBlinkingCircle(void *pvParameters){
     }    
 }
 
+void vButtonAHandler(void *pvParameters){
+    TickType_t last_change = xTaskGetTickCount();
+
+    while(1){
+        if (ButtonASignal){
+            xSemaphoreTake(ButtonASignal, portMAX_DELAY); // Blocking on binary semaphore
+            if(xTaskGetTickCount() - last_change > DEBOUNCE_DELAY){ // Debounce button
+                if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
+                    counter.counter_a++;
+                }
+                last_change = xTaskGetTickCount();
+                xSemaphoreGive(counter.lock);
+            }
+        }
+        vCheckForStateInput();
+    }
+}
+
+void vButtonBHandler(void *pvParameters){
+    TickType_t last_change = xTaskGetTickCount();
+
+    while(1){
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // Blocking on task notification
+        if(xTaskGetTickCount() - last_change > DEBOUNCE_DELAY){ // Debounce button
+            if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
+                counter.counter_b++;
+            }
+            last_change = xTaskGetTickCount();
+            xSemaphoreGive(counter.lock);
+        }
+        vCheckForStateInput();
+    }
+}
+
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
@@ -636,6 +720,12 @@ int main(int argc, char *argv[])
         goto err_screen_lock;
     }
 
+    counter.lock = xSemaphoreCreateMutex();
+    if (!counter.lock) {
+        PRINT_ERROR("Failed to create counter lock.");
+        goto err_counter_lock;
+    }
+
     BlueCircleSignal = xSemaphoreCreateBinary();
     if (!BlueCircleSignal) {
         PRINT_ERROR("Failed to create blue circle signal.");
@@ -648,6 +738,12 @@ int main(int argc, char *argv[])
         goto err_red_circle_signal;
     }
 
+    ButtonASignal = xSemaphoreCreateBinary();
+    if(!ButtonASignal){
+        PRINT_ERROR("Failed to create button A signal.");
+        goto err_button_a_signal;        
+    }
+
     // Message sending
     StateMachineQueue = xQueueCreate(STATE_MACHINE_QUEUE_LENGTH, sizeof(unsigned char));
     if (!StateMachineQueue) {
@@ -655,6 +751,7 @@ int main(int argc, char *argv[])
         goto err_state_machine_queue;
     }
     
+    // Tasks
     if (xTaskCreate(vSequentialStateMachine, "StateMachine", mainGENERIC_STACK_SIZE * 2, NULL,
                     configMAX_PRIORITIES-1, &StateMachine) != pdPASS) {
         goto err_state_machine;
@@ -674,6 +771,16 @@ int main(int argc, char *argv[])
                     mainGENERIC_PRIORITY, xStack, &xTaskBuffer);
     if (!RedBlinkingCircleTask) {
         goto err_red_blinking_circle_task;
+    }
+
+    if (xTaskCreate(vButtonAHandler, "ButtonAHandlingTask", mainGENERIC_STACK_SIZE*2, NULL,
+                    mainGENERIC_PRIORITY, &ButtonAHandlerTask) != pdPASS) {
+        goto err_button_a_handler_task;
+    }
+
+    if (xTaskCreate(vButtonBHandler, "ButtonBHandlingTask", mainGENERIC_STACK_SIZE*2, NULL,
+                    mainGENERIC_PRIORITY, &ButtonBHandlerTask) != pdPASS) {
+        goto err_button_b_handler_task;
     }    
     
     if (xTaskCreate(vFirstScreenTask, "FirstScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
@@ -697,12 +804,20 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 
 // Exits in reverse order to init
+
+// Deleting screen tasks
 err_third_screen_task:
     vTaskDelete(ThirdScreenTask);
 err_second_screen_task:
     vTaskDelete(SecondScreenTask);
 err_first_screen_task:
     vTaskDelete(FirstScreenTask);
+
+// Deleting other tasks
+err_button_b_handler_task:
+    vTaskDelete(ButtonBHandlerTask);
+err_button_a_handler_task:
+    vTaskDelete(ButtonAHandlerTask);
 err_red_blinking_circle_task:
     vTaskDelete(RedBlinkingCircleTask);
 err_blue_blinking_circle_task:
@@ -713,16 +828,24 @@ err_state_machine:
     vTaskDelete(StateMachine);
 err_state_machine_queue:
     vQueueDelete(StateMachineQueue);
+
+// Deleting semaphores
+err_button_a_signal:
+    vSemaphoreDelete(ButtonASignal);
 err_red_circle_signal:
     vSemaphoreDelete(RedCircleSignal);
 err_blue_circle_signal:
     vSemaphoreDelete(BlueCircleSignal);
+err_counter_lock:
+    vSemaphoreDelete(counter.lock);
 err_screen_lock:
     vSemaphoreDelete(ScreenLock);
 err_draw_signal:
     vSemaphoreDelete(DrawSignal);
 err_buttons_lock:
     vSemaphoreDelete(buttons.lock);
+
+// Exit other stuff
 err_init_audio:
     tumSoundExit();
 err_init_events:
