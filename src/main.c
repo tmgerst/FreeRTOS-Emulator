@@ -43,15 +43,31 @@
 #define STATE_EX_THREE 1
 #define STATE_EX_FOUR 2
 
+#define FPS_AVERAGE_COUNT 50
+
+#define STACK_SIZE 100
+#define FIRST_BLINKING_PERIOD 1000 // in ticks, so milliseconds
+#define SECOND_BLINKING_PERIOD 500
+
 //static TaskHandle_t BigDrawingTask = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwapTask = NULL;
 static TaskHandle_t FirstScreenTask = NULL;
 static TaskHandle_t SecondScreenTask = NULL;
 static TaskHandle_t ThirdScreenTask = NULL;
+static TaskHandle_t BlueBlinkingCircleTask = NULL;
+static TaskHandle_t RedBlinkingCircleTask = NULL;
+
+static StaticTask_t xIdleTaskTCB;
+static StackType_t uxIdleTaskStack[ 1 ];
+
+static StaticTask_t xTaskBuffer;
+static StackType_t xStack[ STACK_SIZE ];
 
 static SemaphoreHandle_t DrawSignal = NULL;
 static SemaphoreHandle_t ScreenLock = NULL;
+static SemaphoreHandle_t BlueCircleSignal = NULL;
+static SemaphoreHandle_t RedCircleSignal = NULL;
 static QueueHandle_t StateMachineQueue = NULL;
 
 typedef struct buttons_buffer {
@@ -62,6 +78,21 @@ typedef struct buttons_buffer {
 static buttons_buffer_t buttons = { 0 };
 
 const unsigned char next_state_signal = NEXT_STATE;
+
+void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize )
+{
+    /* Pass out a pointer to the StaticTask_t structure in which the Idle task’s
+    state will be stored. */
+    *ppxIdleTaskTCBBuffer = &xIdleTaskTCB;
+
+    /* Pass out the array that will be used as the Idle task’s stack. */
+    *ppxIdleTaskStackBuffer = uxIdleTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxIdleTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configMINIMAL_STACK_SIZE is specified in words, not bytes. */
+    *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
 
 void xGetButtonInput(void)
 {
@@ -283,7 +314,7 @@ void vCheckForStateInput(void){
 }
 
 void changingStateAfterInput(unsigned char *state, unsigned char queue_input){
-    if(*state+queue_input >= NUMBER_OF_STATES){
+    if(*state + queue_input >= NUMBER_OF_STATES){
         *state = STATE_EX_TWO;
     }
     else{
@@ -320,19 +351,26 @@ state_handling:
                     case STATE_EX_TWO:
                         vTaskSuspend(SecondScreenTask);
                         vTaskSuspend(ThirdScreenTask);
+
                         vTaskResume(FirstScreenTask);
+                        vTaskResume(BlueBlinkingCircleTask);
                         break;
                     case STATE_EX_THREE:
+                        vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(ThirdScreenTask);
+
                         vTaskResume(SecondScreenTask);
                         break;
                     case STATE_EX_FOUR:
+                        vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(SecondScreenTask);
+
                         vTaskResume(ThirdScreenTask);
                         break;
                     default:
+                        printf("Default has been hit.\n");
                         break;
                 }
                 change_state = 0;
@@ -345,7 +383,7 @@ void vSwapBuffers(void *pvParameters)
 {
     TickType_t xLastWakeTime;
     xLastWakeTime = xTaskGetTickCount();
-    const TickType_t frameratePeriod = 20;
+    const TickType_t frameratePeriod = 10;
 
     tumDrawBindThread(); // Setup Rendering handle with correct GL context
 
@@ -361,11 +399,65 @@ void vSwapBuffers(void *pvParameters)
     }
 }
 
+void vDrawFPS(void)
+{
+    static unsigned int periods[FPS_AVERAGE_COUNT] = { 0 };
+    static unsigned int periods_total = 0;
+    static unsigned int index = 0;
+    static unsigned int average_count = 0;
+    static TickType_t xLastWakeTime = 0, prevWakeTime = 0;
+    static char str[10] = { 0 };
+    static int text_width;
+    int fps = 0;
+
+    if (average_count < FPS_AVERAGE_COUNT) {
+        average_count++;
+    }
+    else {
+        periods_total -= periods[index];
+    }
+
+    xLastWakeTime = xTaskGetTickCount();
+
+    if (prevWakeTime != xLastWakeTime) {
+        periods[index] = configTICK_RATE_HZ / (xLastWakeTime - prevWakeTime);
+        prevWakeTime = xLastWakeTime;
+    }
+    else {
+        periods[index] = 0;
+    }
+
+    periods_total += periods[index];
+
+    if (index == (FPS_AVERAGE_COUNT - 1)) {
+        index = 0;
+    }
+    else {
+        index++;
+    }
+
+    fps = periods_total / average_count;
+
+    sprintf(str, "FPS: %2d", fps);
+
+    if (!tumGetTextSize((char *)str, &text_width, NULL))
+        tumDrawText(str, SCREEN_WIDTH - text_width - 10, DEFAULT_FONT_SIZE, Black);
+}
+
 void vFirstScreenTask(void *pvParameter){  
 
-    char first_text[30] = "First Task";
+    char first_text[30] = "Blinking Circles";
     int first_text_width = 0;
     tumGetTextSize((char *) first_text, &first_text_width, NULL); 
+
+    coord_t position_blue_circle = {0.25*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
+    coord_t position_red_circle = {0.75*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
+
+    unsigned char red_circle_drawn = 1;
+    unsigned char blue_circle_drawn = 1;
+
+    int time_measured = 0;
+    TickType_t last_change = xTaskGetTickCount();
 
     while(1){
         if (DrawSignal){
@@ -374,13 +466,50 @@ void vFirstScreenTask(void *pvParameter){
                 tumEventFetchEvents(FETCH_EVENT_BLOCK | FETCH_EVENT_NO_GL_CHECK);
                 xGetButtonInput(); // Update global button data
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
-                
-                tumDrawClear(White);
 
+                tumDrawClear(White);
                 if (!tumGetTextSize((char *)first_text, &first_text_width, NULL)){
-                    tumDrawText(first_text, SCREEN_WIDTH/2 - first_text_width/2, SCREEN_HEIGHT/2 - DEFAULT_FONT_SIZE/2, TUMBlue);
+                    tumDrawText(first_text, SCREEN_WIDTH/2 - first_text_width/2, SCREEN_HEIGHT/8 - DEFAULT_FONT_SIZE/2, TUMBlue);
                 }
 
+                if (BlueCircleSignal){
+                    if (xSemaphoreTake(BlueCircleSignal, 0)){
+                        if (blue_circle_drawn == 0){
+                            blue_circle_drawn = 1;
+                        }
+                        else{
+                            blue_circle_drawn = 0;
+                        }
+                    }
+                }
+
+                if (RedCircleSignal){
+                    if (xSemaphoreTake(RedCircleSignal, 0)){
+                        if(red_circle_drawn == 0){
+                            red_circle_drawn = 1;
+                        }
+                        else{
+                            red_circle_drawn = 0;
+                        }
+                    }
+                }
+
+                if (blue_circle_drawn == 0){
+                    tumDrawCircle(position_blue_circle.x, position_blue_circle.y, 25, TUMBlue);
+                }
+                if (red_circle_drawn == 0){
+                    tumDrawCircle(position_red_circle.x, position_red_circle.y, 25, Red);
+                    if(time_measured == 0){
+                        printf("Since last time: %i\n", xTaskGetTickCount() - last_change);
+                        last_change = xTaskGetTickCount();
+                        time_measured = 1;                        
+                    }
+                }
+                else{
+                    time_measured = 0;
+                }
+
+                vDrawFPS();
                 xSemaphoreGive(ScreenLock);
                 vCheckForStateInput();
             }
@@ -442,6 +571,31 @@ void vThirdScreenTask(void *pvParameters){
     }
 }
 
+void vBlueBlinkingCircle(void *pvParameters){
+
+    TickType_t blue_last_wake_period = xTaskGetTickCount();
+    
+    while(1){
+        if (BlueCircleSignal){
+            vTaskDelayUntil(&blue_last_wake_period, FIRST_BLINKING_PERIOD/2);
+            xSemaphoreGive(BlueCircleSignal);
+        }
+        vCheckForStateInput();
+    }
+}
+
+void vRedBlinkingCircle(void *pvParameters){
+
+    TickType_t red_last_wake_time = xTaskGetTickCount();
+    
+    while(1){
+        if(RedCircleSignal){
+            vTaskDelayUntil(&red_last_wake_time, SECOND_BLINKING_PERIOD/2);
+            xSemaphoreGive(RedCircleSignal);
+        }
+        vCheckForStateInput();
+    }    
+}
 
 int main(int argc, char *argv[])
 {
@@ -482,6 +636,18 @@ int main(int argc, char *argv[])
         goto err_screen_lock;
     }
 
+    BlueCircleSignal = xSemaphoreCreateBinary();
+    if (!BlueCircleSignal) {
+        PRINT_ERROR("Failed to create blue circle signal.");
+        goto err_blue_circle_signal;
+    }
+
+    RedCircleSignal = xSemaphoreCreateBinary();
+    if (!RedCircleSignal) {
+        PRINT_ERROR("Failed to create red circle signal.");
+        goto err_red_circle_signal;
+    }
+
     // Message sending
     StateMachineQueue = xQueueCreate(STATE_MACHINE_QUEUE_LENGTH, sizeof(unsigned char));
     if (!StateMachineQueue) {
@@ -499,8 +665,19 @@ int main(int argc, char *argv[])
         goto err_buffer_swap_task;
     }
 
+    if (xTaskCreate(vBlueBlinkingCircle, "BlueBlinkingCircleTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY+1, &BlueBlinkingCircleTask) != pdPASS) {
+        goto err_blue_blinking_circle_task;
+    }
+
+    RedBlinkingCircleTask = xTaskCreateStatic(vRedBlinkingCircle, "RedBlinkingCircleTask", STACK_SIZE, NULL, 
+                    mainGENERIC_PRIORITY, xStack, &xTaskBuffer);
+    if (!RedBlinkingCircleTask) {
+        goto err_red_blinking_circle_task;
+    }    
+    
     if (xTaskCreate(vFirstScreenTask, "FirstScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
-                    mainGENERIC_PRIORITY, &FirstScreenTask) != pdPASS) {
+                    mainGENERIC_PRIORITY+2, &FirstScreenTask) != pdPASS) {
         goto err_first_screen_task;
     }
 
@@ -526,12 +703,20 @@ err_second_screen_task:
     vTaskDelete(SecondScreenTask);
 err_first_screen_task:
     vTaskDelete(FirstScreenTask);
+err_red_blinking_circle_task:
+    vTaskDelete(RedBlinkingCircleTask);
+err_blue_blinking_circle_task:
+    vTaskDelete(BlueBlinkingCircleTask);
 err_buffer_swap_task:
     vTaskDelete(BufferSwapTask);
 err_state_machine:
     vTaskDelete(StateMachine);
 err_state_machine_queue:
     vQueueDelete(StateMachineQueue);
+err_red_circle_signal:
+    vSemaphoreDelete(RedCircleSignal);
+err_blue_circle_signal:
+    vSemaphoreDelete(BlueCircleSignal);
 err_screen_lock:
     vSemaphoreDelete(ScreenLock);
 err_draw_signal:

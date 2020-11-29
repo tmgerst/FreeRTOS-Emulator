@@ -81,6 +81,7 @@
 #define configUSE_TASK_NOTIFICATIONS    1
 #define configUSE_COUNTING_SEMAPHORES   1
 #define configUSE_ALTERNATIVE_API       0
+#define configUSE_TIME_SLICING          0
 #define configUSE_RECURSIVE_MUTEXES     1
 #define configCHECK_FOR_STACK_OVERFLOW  0 /* Do not use this option on the PC port. */
 #define configUSE_APPLICATION_TASK_TAG  1
@@ -89,6 +90,10 @@
 
 #define configMAX_PRIORITIES        ( 10 )
 #define configMAX_CO_ROUTINE_PRIORITIES ( 2 )
+
+/* Memory allocation related definitions. */
+#define configSUPPORT_STATIC_ALLOCATION         1
+#define configSUPPORT_DYNAMIC_ALLOCATION        1
 
 /* Set the following definitions to 1 to include the API function, or zero
  to exclude the API function. */
