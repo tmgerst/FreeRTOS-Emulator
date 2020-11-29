@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "semphr.h"
 #include "task.h"
+#include "timers.h"
 
 #include "TUM_Ball.h"
 #include "TUM_Draw.h"
@@ -49,6 +50,8 @@
 #define FIRST_BLINKING_PERIOD 1000 // in ticks, so milliseconds
 #define SECOND_BLINKING_PERIOD 500
 
+#define TIMER_PERIOD 15000
+
 //static TaskHandle_t BigDrawingTask = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwapTask = NULL;
@@ -60,9 +63,11 @@ static TaskHandle_t RedBlinkingCircleTask = NULL;
 static TaskHandle_t ButtonAHandlerTask = NULL;
 static TaskHandle_t ButtonBHandlerTask = NULL;
 
+// Variables needed for static allocation 
 static StaticTask_t xIdleTaskTCB;
 static StackType_t uxIdleTaskStack[ 1 ];
-
+static StaticTask_t xTimerTaskTCB;
+static StackType_t uxTimerTaskStack[ configTIMER_TASK_STACK_DEPTH ];
 static StaticTask_t xTaskBuffer;
 static StackType_t xStack[ STACK_SIZE ];
 
@@ -73,6 +78,8 @@ static SemaphoreHandle_t RedCircleSignal = NULL;
 static SemaphoreHandle_t ButtonASignal = NULL;
 
 static QueueHandle_t StateMachineQueue = NULL;
+
+static xTimerHandle ResetButtonsABTimer = NULL;
 
 typedef struct buttons_buffer {
     unsigned char buttons[SDL_NUM_SCANCODES];
@@ -104,6 +111,21 @@ void vApplicationGetIdleTaskMemory( StaticTask_t **ppxIdleTaskTCBBuffer, StackTy
     Note that, as the array is necessarily of type StackType_t,
     configMINIMAL_STACK_SIZE is specified in words, not bytes. */
     *pulIdleTaskStackSize = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer, StackType_t **ppxTimerTaskStackBuffer, uint32_t *pulTimerTaskStackSize )
+{
+    /* Pass out a pointer to the StaticTask_t structure in which the Timer
+    task’s state will be stored. */
+    *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
+
+    /* Pass out the array that will be used as the Timer task’s stack. */
+    *ppxTimerTaskStackBuffer = uxTimerTaskStack;
+
+    /* Pass out the size of the array pointed to by *ppxTimerTaskStackBuffer.
+    Note that, as the array is necessarily of type StackType_t,
+    configTIMER_TASK_STACK_DEPTH is specified in words, not bytes. */
+    *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
 
 void xGetButtonInput(void)
@@ -494,8 +516,8 @@ void vFirstScreenTask(void *pvParameter){
     unsigned char red_circle_drawn = 1;
     unsigned char blue_circle_drawn = 1;
 
-    int time_measured = 0;
-    TickType_t last_change = xTaskGetTickCount();
+    // int time_measured = 0;
+    // TickType_t last_change = xTaskGetTickCount();
 
     while(1){
         if (DrawSignal){
@@ -517,7 +539,7 @@ void vFirstScreenTask(void *pvParameter){
                     sprintf(str, "A: %3d | B: %3d", counter.counter_a, counter.counter_b);
                 }
                 xSemaphoreGive(counter.lock);
-                tumDrawText(str, SCREEN_WIDTH-90, SCREEN_HEIGHT-DEFAULT_FONT_SIZE-5, Black);   // Draw button counters
+                tumDrawText(str, SCREEN_WIDTH-100, SCREEN_HEIGHT-DEFAULT_FONT_SIZE-5, Black);   // Draw button counters
 
                 // Check for input from blue circle task and interpret it to draw or not draw the circle
                 if (BlueCircleSignal){
@@ -549,16 +571,17 @@ void vFirstScreenTask(void *pvParameter){
                 }
                 if (red_circle_drawn == 0){
                     tumDrawCircle(position_red_circle.x, position_red_circle.y, 25, Red);
-                    if(time_measured == 0){
+                    /* if(time_measured == 0){
                         printf("Since last time: %i\n", xTaskGetTickCount() - last_change);
                         last_change = xTaskGetTickCount();
                         time_measured = 1;                        
                     }
+                    */
                 }
-                else{
+                /* else{
                     time_measured = 0;
-                }
-
+                } */
+                
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
                 vCheckForStateInput();
@@ -681,6 +704,16 @@ void vButtonBHandler(void *pvParameters){
     }
 }
 
+void vResetButtonsAB(void *pvParameters){
+    printf("Entering callback function.\n");
+    if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
+        printf("Resetting button values.\n");
+        counter.counter_a = 0;
+        counter.counter_b = 0;
+    }
+    xSemaphoreGive(counter.lock);
+}
+
 int main(int argc, char *argv[])
 {
     char *bin_folder_path = tumUtilGetBinFolderPath(argv[0]);
@@ -720,7 +753,7 @@ int main(int argc, char *argv[])
         goto err_screen_lock;
     }
 
-    counter.lock = xSemaphoreCreateMutex();
+    counter.lock = xSemaphoreCreateMutex(); // Locking of button counter variables
     if (!counter.lock) {
         PRINT_ERROR("Failed to create counter lock.");
         goto err_counter_lock;
@@ -738,7 +771,7 @@ int main(int argc, char *argv[])
         goto err_red_circle_signal;
     }
 
-    ButtonASignal = xSemaphoreCreateBinary();
+    ButtonASignal = xSemaphoreCreateBinary(); // Semaphore for signaling that button A is pressed
     if(!ButtonASignal){
         PRINT_ERROR("Failed to create button A signal.");
         goto err_button_a_signal;        
@@ -750,8 +783,16 @@ int main(int argc, char *argv[])
         PRINT_ERROR("Could not open state queue");
         goto err_state_machine_queue;
     }
+
+    // Timers
+    ResetButtonsABTimer = xTimerCreate("ResetButtonsABTimer", TIMER_PERIOD, pdTRUE, (void*) 0, vResetButtonsAB);
+    if(!ResetButtonsABTimer){
+        PRINT_ERROR("Could not create timer.");
+        goto err_reset_buttons_ab_timer;
+    }
     
-    // Tasks
+    // ----------------------------------------Tasks----------------------------------------------------
+
     if (xTaskCreate(vSequentialStateMachine, "StateMachine", mainGENERIC_STACK_SIZE * 2, NULL,
                     configMAX_PRIORITIES-1, &StateMachine) != pdPASS) {
         goto err_state_machine;
@@ -762,6 +803,7 @@ int main(int argc, char *argv[])
         goto err_buffer_swap_task;
     }
 
+    // Blinking Circles
     if (xTaskCreate(vBlueBlinkingCircle, "BlueBlinkingCircleTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY+1, &BlueBlinkingCircleTask) != pdPASS) {
         goto err_blue_blinking_circle_task;
@@ -773,16 +815,18 @@ int main(int argc, char *argv[])
         goto err_red_blinking_circle_task;
     }
 
+    // Button Handler Functions
     if (xTaskCreate(vButtonAHandler, "ButtonAHandlingTask", mainGENERIC_STACK_SIZE*2, NULL,
-                    mainGENERIC_PRIORITY, &ButtonAHandlerTask) != pdPASS) {
+                    mainGENERIC_PRIORITY+1, &ButtonAHandlerTask) != pdPASS) {
         goto err_button_a_handler_task;
     }
 
     if (xTaskCreate(vButtonBHandler, "ButtonBHandlingTask", mainGENERIC_STACK_SIZE*2, NULL,
                     mainGENERIC_PRIORITY, &ButtonBHandlerTask) != pdPASS) {
         goto err_button_b_handler_task;
-    }    
+    } 
     
+    // Screen drawing functions
     if (xTaskCreate(vFirstScreenTask, "FirstScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY+2, &FirstScreenTask) != pdPASS) {
         goto err_first_screen_task;
@@ -798,6 +842,7 @@ int main(int argc, char *argv[])
         goto err_third_screen_task;
     }
 
+    xTimerStart(ResetButtonsABTimer, 0);    // timer starts once the scheduler starts, but can be called here nonetheless
 
     vTaskStartScheduler();
 
@@ -828,6 +873,10 @@ err_state_machine:
     vTaskDelete(StateMachine);
 err_state_machine_queue:
     vQueueDelete(StateMachineQueue);
+
+// Deleting timers
+err_reset_buttons_ab_timer:
+    xTimerDelete(ResetButtonsABTimer, 0);
 
 // Deleting semaphores
 err_button_a_signal:
