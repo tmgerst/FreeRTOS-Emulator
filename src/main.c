@@ -51,6 +51,7 @@
 #define SECOND_BLINKING_PERIOD 500
 
 #define TIMER_PERIOD 15000
+#define PERIODIC_COUNTER_PERIOD 1000
 
 //static TaskHandle_t BigDrawingTask = NULL;
 static TaskHandle_t StateMachine = NULL;
@@ -62,6 +63,7 @@ static TaskHandle_t BlueBlinkingCircleTask = NULL;
 static TaskHandle_t RedBlinkingCircleTask = NULL;
 static TaskHandle_t ButtonAHandlerTask = NULL;
 static TaskHandle_t ButtonBHandlerTask = NULL;
+static TaskHandle_t EverySecondCounterTask = NULL;
 
 // Variables needed for static allocation 
 static StaticTask_t xIdleTaskTCB;
@@ -94,7 +96,8 @@ typedef struct counter {
     SemaphoreHandle_t lock;
 } counter_t;
 
-static counter_t counter = { 0 };
+static counter_t counter = { 0 };   // counters for buttons A and B which count the number they were pressed
+static counter_t seconds_counter = { 0 }; // counter for the incrementing variable, updating every second. Only counter A will be used.
 
 const unsigned char next_state_signal = NEXT_STATE;
 
@@ -387,20 +390,14 @@ state_handling:
                         vTaskSuspend(ThirdScreenTask);
 
                         vTaskResume(FirstScreenTask);
-                        // vTaskResume(BlueBlinkingCircleTask);
-                        // vTaskResume(RedBlinkingCircleTask);
                         break;
                     case STATE_EX_THREE:
-                        // vTaskSuspend(RedBlinkingCircleTask);
-                        // vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(ThirdScreenTask);
 
                         vTaskResume(SecondScreenTask);
                         break;
                     case STATE_EX_FOUR:
-                        // vTaskSuspend(RedBlinkingCircleTask);
-                        // vTaskSuspend(BlueBlinkingCircleTask);
                         vTaskSuspend(FirstScreenTask);
                         vTaskSuspend(SecondScreenTask);
 
@@ -482,6 +479,7 @@ void vDrawFPS(void)
 }
 
 void vCheckForButtonInput(void){
+
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
 
         // if A has been pressed, give binary semaphore
@@ -502,6 +500,28 @@ void vCheckForButtonInput(void){
     xSemaphoreGive(buttons.lock);
 }
 
+// state = 1: task is running | state = 0: task is suspended
+void vCheckForPeriodicCounter(unsigned char *state){
+
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
+        if (buttons.buttons[KEYCODE(C)]){
+            buttons.buttons[KEYCODE(C)] = 0;
+            if (*state == 1){
+                vTaskSuspend(EverySecondCounterTask);
+                printf("Suspend seconds counter.\n");
+                *state = 0;
+            }
+            else{
+                vTaskResume(EverySecondCounterTask);
+                printf("Resume seconds counter.\n");
+                *state = 1;
+            }
+            xSemaphoreGive(buttons.lock);
+        }
+    }
+    xSemaphoreGive(buttons.lock);
+}
+
 void vFirstScreenTask(void *pvParameter){  
 
     char first_text[30] = "Blinking Circles";
@@ -509,12 +529,15 @@ void vFirstScreenTask(void *pvParameter){
     tumGetTextSize((char *) first_text, &first_text_width, NULL); 
 
     char str[30] = {0};
+    char str_periodic[100] = {0};
 
     coord_t position_blue_circle = {0.25*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
     coord_t position_red_circle = {0.75*SCREEN_WIDTH, 0.5*SCREEN_HEIGHT};
 
     unsigned char red_circle_drawn = 1;
     unsigned char blue_circle_drawn = 1;
+
+    unsigned char every_second_counter_task_state = 1; // 1: task runs, 0: task suspended
 
     // int time_measured = 0;
     // TickType_t last_change = xTaskGetTickCount();
@@ -540,6 +563,14 @@ void vFirstScreenTask(void *pvParameter){
                 }
                 xSemaphoreGive(counter.lock);
                 tumDrawText(str, SCREEN_WIDTH-100, SCREEN_HEIGHT-DEFAULT_FONT_SIZE-5, Black);   // Draw button counters
+
+                // Check for input from button C, changing the state of the seconds counter
+                vCheckForPeriodicCounter(&every_second_counter_task_state);
+                if (xSemaphoreTake(seconds_counter.lock, 0) == pdTRUE){
+                    sprintf(str_periodic, "Seconds counter: %4d", seconds_counter.counter_a);
+                }
+                xSemaphoreGive(seconds_counter.lock);
+                tumDrawText(str_periodic, 10, SCREEN_HEIGHT-DEFAULT_FONT_SIZE-5, Black);
 
                 // Check for input from blue circle task and interpret it to draw or not draw the circle
                 if (BlueCircleSignal){
@@ -653,7 +684,6 @@ void vBlueBlinkingCircle(void *pvParameters){
             vTaskDelayUntil(&blue_last_wake_period, FIRST_BLINKING_PERIOD/2);
             xSemaphoreGive(BlueCircleSignal);
         }
-        vCheckForStateInput();
     }
 }
 
@@ -666,7 +696,6 @@ void vRedBlinkingCircle(void *pvParameters){
             vTaskDelayUntil(&red_last_wake_time, SECOND_BLINKING_PERIOD/2);
             xSemaphoreGive(RedCircleSignal);
         }
-        vCheckForStateInput();
     }    
 }
 
@@ -684,7 +713,6 @@ void vButtonAHandler(void *pvParameters){
                 xSemaphoreGive(counter.lock);
             }
         }
-        vCheckForStateInput();
     }
 }
 
@@ -700,18 +728,28 @@ void vButtonBHandler(void *pvParameters){
             last_change = xTaskGetTickCount();
             xSemaphoreGive(counter.lock);
         }
-        vCheckForStateInput();
     }
 }
 
 void vResetButtonsAB(void *pvParameters){
-    printf("Entering callback function.\n");
     if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
-        printf("Resetting button values.\n");
+        printf("Reset button counters.\n");
         counter.counter_a = 0;
         counter.counter_b = 0;
     }
     xSemaphoreGive(counter.lock);
+}
+
+void vEverySecondCounter(void *pvParameters){
+    TickType_t last_wake_time = xTaskGetTickCount();
+
+    while(1){
+        vTaskDelayUntil(&last_wake_time, PERIODIC_COUNTER_PERIOD);
+        if(xSemaphoreTake(seconds_counter.lock, 0) == pdTRUE){
+            seconds_counter.counter_a++;
+        }
+        xSemaphoreGive(counter.lock);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -757,6 +795,12 @@ int main(int argc, char *argv[])
     if (!counter.lock) {
         PRINT_ERROR("Failed to create counter lock.");
         goto err_counter_lock;
+    }
+
+    seconds_counter.lock = xSemaphoreCreateMutex();
+    if (!seconds_counter.lock) {
+        PRINT_ERROR("Failed to create seconds_counter lock.");
+        goto err_seconds_counter_lock;
     }
 
     BlueCircleSignal = xSemaphoreCreateBinary();
@@ -825,6 +869,11 @@ int main(int argc, char *argv[])
                     mainGENERIC_PRIORITY, &ButtonBHandlerTask) != pdPASS) {
         goto err_button_b_handler_task;
     } 
+
+    if (xTaskCreate(vEverySecondCounter, "EverySecondCounterTask", mainGENERIC_STACK_SIZE*2, NULL,
+                    mainGENERIC_PRIORITY, &EverySecondCounterTask) != pdPASS) {
+        goto err_every_second_counter_task;
+    }     
     
     // Screen drawing functions
     if (xTaskCreate(vFirstScreenTask, "FirstScreenTask", mainGENERIC_STACK_SIZE * 2, NULL,
@@ -859,6 +908,8 @@ err_first_screen_task:
     vTaskDelete(FirstScreenTask);
 
 // Deleting other tasks
+err_every_second_counter_task:
+    vTaskDelete(EverySecondCounterTask);
 err_button_b_handler_task:
     vTaskDelete(ButtonBHandlerTask);
 err_button_a_handler_task:
@@ -885,6 +936,8 @@ err_red_circle_signal:
     vSemaphoreDelete(RedCircleSignal);
 err_blue_circle_signal:
     vSemaphoreDelete(BlueCircleSignal);
+err_seconds_counter_lock:
+    vSemaphoreDelete(seconds_counter.lock);
 err_counter_lock:
     vSemaphoreDelete(counter.lock);
 err_screen_lock:
