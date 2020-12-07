@@ -67,6 +67,9 @@ static TaskHandle_t ButtonFHandlerTask = NULL;
 static TaskHandle_t ButtonGHandlerTask = NULL;
 static TaskHandle_t PeriodicCounterTask = NULL;
 
+static TaskHandle_t FirstTickTask = NULL;
+static TaskHandle_t SecondTickTask = NULL;
+
 // Variables needed for static allocation 
 static StaticTask_t xIdleTaskTCB;
 static StackType_t uxIdleTaskStack[ 1 ];
@@ -82,6 +85,7 @@ static SemaphoreHandle_t RedCircleSignal = NULL;
 static SemaphoreHandle_t ButtonFSignal = NULL;
 
 static QueueHandle_t StateMachineQueue = NULL;
+static QueueHandle_t TickTasksQueue = NULL;
 
 static xTimerHandle ResetButtonsFGTimer = NULL;
 
@@ -100,6 +104,15 @@ typedef struct counter {
 
 static counter_t counter = { 0 };   // counters for buttons A and B which count the number they were pressed
 static counter_t seconds_counter = { 0 }; // counter for the incrementing variable, updating every second. Only counter A will be used.
+
+// Storage for 15 ticks from 4 tasks, where the first column is for the tick number
+typedef struct tick_storage {
+    unsigned char ticks[15][5];
+    SemaphoreHandle_t lock;
+} tick_storage_t;
+
+static tick_storage_t storage_for_ticks = { 0 };
+
 
 const unsigned char next_state_signal = NEXT_STATE;
 
@@ -715,6 +728,108 @@ void vExerciseThreeDrawingTask(void *pvParameter){
 
 // ------------------------------- Functions for Exercise 4 -----------------------------------------------------------------------------------------
 
+void vFirstTickTask(void *pvParameters){
+
+    TickType_t last_wake_time = xTaskGetTickCount();
+    TickType_t starting_tick = xTaskGetTickCount();
+    TickType_t current_tick = xTaskGetTickCount();
+
+    unsigned char first_tick_task_signal = 1;
+
+    printf("Starting tick task 1: %i\n", starting_tick);
+
+    while(1){
+        current_tick = xTaskGetTickCount() - starting_tick;
+
+        if(current_tick <= 14){
+
+            if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
+
+                // Saving the tick number in the first column
+                storage_for_ticks.ticks[current_tick][0] = xTaskGetTickCount();
+                
+                // Check which space in the row is still available and hasnt been claimed by another tick task
+                if(storage_for_ticks.ticks[current_tick][1] == 0){
+                    storage_for_ticks.ticks[current_tick][1] = first_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[current_tick][2] == 0){
+                    storage_for_ticks.ticks[current_tick][2] = first_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[current_tick][3] == 0){
+                    storage_for_ticks.ticks[current_tick][3] = first_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[current_tick][4] == 0){
+                    storage_for_ticks.ticks[current_tick][4] = first_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+            }
+            xSemaphoreGive(storage_for_ticks.lock);
+        }
+        else{
+            printf("Suspending FirstTickTask.\n");
+            vTaskSuspend(FirstTickTask);
+        }
+
+        printf("Tick: %i | %u %u %u %u\n", storage_for_ticks.ticks[current_tick][0], storage_for_ticks.ticks[current_tick][1],
+                                            storage_for_ticks.ticks[current_tick][2], storage_for_ticks.ticks[current_tick][3],
+                                            storage_for_ticks.ticks[current_tick][4]);
+
+        vTaskDelayUntil(&last_wake_time, 1);
+    }
+}
+
+void vSecondTickTask(void *pvParamters){
+
+    TickType_t starting_tick = xTaskGetTickCount();
+    TickType_t last_wake_time = xTaskGetTickCount();
+    TickType_t current_tick = xTaskGetTickCount();
+
+    unsigned char second_tick_task_signal = 2;
+
+    printf("Starting tick task 2: %i\n", starting_tick);
+
+    while(1){
+        current_tick = xTaskGetTickCount() - starting_tick;
+
+        if(current_tick <= 14) {
+
+            if((current_tick+1) % 2 == 0){      // second condition used to offset this task by one tick compared to the the FirstTickTask
+
+                if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
+
+                    // Check which space in the row is still available and hasnt been claimed by another tick task
+                    if(storage_for_ticks.ticks[current_tick][1] == 0){
+                        storage_for_ticks.ticks[current_tick][1] = second_tick_task_signal;
+                        xSemaphoreGive(storage_for_ticks.lock);
+                    }
+                    else if(storage_for_ticks.ticks[current_tick][2] == 0){
+                        storage_for_ticks.ticks[current_tick][2] = second_tick_task_signal;
+                        xSemaphoreGive(storage_for_ticks.lock);
+                    }
+                    else if(storage_for_ticks.ticks[current_tick][3] == 0){
+                        storage_for_ticks.ticks[current_tick][3] = second_tick_task_signal;
+                        xSemaphoreGive(storage_for_ticks.lock);
+                    }
+                    else if(storage_for_ticks.ticks[current_tick][4] == 0){
+                        storage_for_ticks.ticks[current_tick][4] = second_tick_task_signal;
+                        xSemaphoreGive(storage_for_ticks.lock);
+                    }
+                }
+            }
+            xSemaphoreGive(storage_for_ticks.lock);
+        }
+        else{
+            printf("Suspending SecondTickTask.\n");
+            vTaskSuspend(SecondTickTask);
+        }
+        vTaskDelayUntil(&last_wake_time, 1);
+    }
+
+}
+
 void vThirdScreenTask(void *pvParameters){
 
     char third_text[30] = "Third Task";
@@ -732,7 +847,7 @@ void vThirdScreenTask(void *pvParameters){
                 tumDrawClear(White);
 
                 if (!tumGetTextSize((char *)third_text, &third_text_width, NULL)){
-                    tumDrawText(third_text, SCREEN_WIDTH/2 - third_text_width/2, SCREEN_HEIGHT/2 - DEFAULT_FONT_SIZE/2, Orange);
+                    tumDrawText(third_text, SCREEN_WIDTH/2 - third_text_width/2, DEFAULT_FONT_SIZE/2, Orange);
                 }
 
                 xSemaphoreGive(ScreenLock);
@@ -795,6 +910,12 @@ int main(int argc, char *argv[])
         goto err_seconds_counter_lock;
     }
 
+    storage_for_ticks.lock = xSemaphoreCreateMutex();
+    if (!storage_for_ticks.lock) {
+        PRINT_ERROR("Failed to create ticks lock.");
+        goto err_ticks_lock;
+    }
+
     BlueCircleSignal = xSemaphoreCreateBinary();
     if (!BlueCircleSignal) {
         PRINT_ERROR("Failed to create blue circle signal.");
@@ -818,6 +939,12 @@ int main(int argc, char *argv[])
     if (!StateMachineQueue) {
         PRINT_ERROR("Could not open state queue");
         goto err_state_machine_queue;
+    }
+
+    TickTasksQueue = xQueueCreate(4, sizeof(int));
+    if (!TickTasksQueue) {
+        PRINT_ERROR("Could not open tick tasks queue.");
+        goto err_tick_tasks_queue;
     }
 
     // Timers
@@ -884,6 +1011,17 @@ int main(int argc, char *argv[])
         goto err_third_screen_task;
     }
 
+    // Tick tasks
+    if (xTaskCreate(vFirstTickTask, "FirstTickTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY+1, &FirstTickTask) != pdPASS) {
+        goto err_first_tick_task;
+    }
+
+    if (xTaskCreate(vSecondTickTask, "SecondTickTask", mainGENERIC_STACK_SIZE * 2, NULL,
+                    mainGENERIC_PRIORITY+2, &SecondTickTask) != pdPASS) {
+        goto err_second_tick_task;
+    }    
+
     xTimerStart(ResetButtonsFGTimer, 0);    // timer starts once the scheduler starts, but can be called here nonetheless
 
     vTaskStartScheduler();
@@ -891,6 +1029,12 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 
 // Exits in reverse order to init
+
+// Deleting tick tasks
+err_second_tick_task:
+    vTaskDelete(SecondTickTask);
+err_first_tick_task:
+    vTaskDelete(FirstTickTask);
 
 // Deleting screen tasks
 err_third_screen_task:
@@ -915,6 +1059,10 @@ err_buffer_swap_task:
     vTaskDelete(BufferSwapTask);
 err_state_machine:
     vTaskDelete(StateMachine);
+
+// Deleting queues
+err_tick_tasks_queue:
+    vQueueDelete(TickTasksQueue);    
 err_state_machine_queue:
     vQueueDelete(StateMachineQueue);
 
@@ -929,6 +1077,8 @@ err_red_circle_signal:
     vSemaphoreDelete(RedCircleSignal);
 err_blue_circle_signal:
     vSemaphoreDelete(BlueCircleSignal);
+err_ticks_lock:
+    vSemaphoreDelete(storage_for_ticks.lock);
 err_seconds_counter_lock:
     vSemaphoreDelete(seconds_counter.lock);
 err_counter_lock:
