@@ -53,7 +53,6 @@
 #define TIMER_PERIOD 15000
 #define PERIODIC_COUNTER_PERIOD 1000
 
-//static TaskHandle_t BigDrawingTask = NULL;
 static TaskHandle_t StateMachine = NULL;
 static TaskHandle_t BufferSwapTask = NULL;
 
@@ -71,7 +70,6 @@ static TaskHandle_t FirstTickTask = NULL;
 static TaskHandle_t SecondTickTask = NULL;
 static TaskHandle_t ThirdTickTask = NULL;
 static TaskHandle_t FourthTickTask = NULL;
-static TaskHandle_t TickTaskHandler = NULL;
 
 // Variables needed for static allocation 
 static StaticTask_t xIdleTaskTCB;
@@ -105,10 +103,10 @@ typedef struct counter {
     SemaphoreHandle_t lock;
 } counter_t;
 
-static counter_t counter = { 0 };   // counters for buttons A and B which count the number they were pressed
-static counter_t seconds_counter = { 0 }; // counter for the incrementing variable, updating every second. Only counter A will be used.
+static counter_t counter = { 0 };           // counters for buttons A and B which count the number they were pressed
+static counter_t seconds_counter = { 0 };   // counter for the incrementing variable, updating every second. Only counter A will be used.
 
-// Storage for 15 ticks from 4 tasks, where the first column is for the tick number
+// Storage for 15 ticks from 4 tasks, where the first column is for the tick number --> used for the last exercise
 typedef struct tick_storage {
     unsigned char ticks[15][5];
     SemaphoreHandle_t lock;
@@ -148,7 +146,7 @@ void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer, Stack
     *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
 
-// -------------------- Functions for functionality of the specific screen tasks ---------------------------------------------------------------------------------
+// -------------------- Functions for functionality of the specific screen drawing tasks ---------------------------------------------------------------------------------
 
 void xGetButtonInput(void)
 {
@@ -730,70 +728,38 @@ void vExerciseThreeDrawingTask(void *pvParameter){
 
 // ------------------------------- Functions for Exercise 4 -----------------------------------------------------------------------------------------
 
-void vTickTaskHandler(void *pvParameters){
-    TickType_t last_wake_time = xTaskGetTickCount();
-    TickType_t starting_tick = xTaskGetTickCount();
-    TickType_t current_tick = xTaskGetTickCount();
-
-    printf("Starting tick task handler: %i\n", starting_tick);
-
-    vTaskResume(FirstTickTask);
-    vTaskResume(SecondTickTask);
-    vTaskResume(ThirdTickTask);
-    vTaskResume(FourthTickTask);
-
-    while(1){
-        current_tick = xTaskGetTickCount() - starting_tick;
-
-        if(current_tick <= 14){
-            if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
-                
-                // Saving the tick number in the first column
-                storage_for_ticks.ticks[current_tick][0] = xTaskGetTickCount();  
-                xSemaphoreGive(storage_for_ticks.lock);    
-            }
-            xSemaphoreGive(storage_for_ticks.lock);
-        }
-        else{
-            printf("Deleting TickTaskHandler.\n");
-            vTaskDelete(TickTaskHandler);
-        }
-        vTaskDelayUntil(&last_wake_time, 1);
-    }
-}
-
 void vFirstTickTask(void *pvParameters){
 
     TickType_t last_wake_time = xTaskGetTickCount();
     TickType_t starting_tick = xTaskGetTickCount();
-    TickType_t current_tick = xTaskGetTickCount();
+    printf("Starting tick of task 1: %i\n", starting_tick);
 
     unsigned char first_tick_task_signal = 1;
 
-    printf("Starting tick task 1: %i\n", starting_tick);
-
     while(1){
-        current_tick = xTaskGetTickCount() - starting_tick;
 
-        if(current_tick <= 14){
+        if(last_wake_time-starting_tick <= 14){
 
             if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
+
+                // Write tick in the first column of the protected 5x15 array
+                storage_for_ticks.ticks[ last_wake_time-starting_tick ][0] = last_wake_time;
                 
                 // Check which space in the row is still available and hasnt been claimed by another tick task
-                if(storage_for_ticks.ticks[current_tick][1] == 0){
-                    storage_for_ticks.ticks[current_tick][1] = first_tick_task_signal;
+                if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
-                else if(storage_for_ticks.ticks[current_tick][2] == 0){
-                    storage_for_ticks.ticks[current_tick][2] = first_tick_task_signal;
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
-                else if(storage_for_ticks.ticks[current_tick][3] == 0){
-                    storage_for_ticks.ticks[current_tick][3] = first_tick_task_signal;
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
-                else if(storage_for_ticks.ticks[current_tick][4] == 0){
-                    storage_for_ticks.ticks[current_tick][4] = first_tick_task_signal;
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
             }
@@ -804,9 +770,10 @@ void vFirstTickTask(void *pvParameters){
             vTaskDelete(FirstTickTask);
         }
 
-        printf("Tick: %d | %u %u %u %u\n", storage_for_ticks.ticks[current_tick][0], storage_for_ticks.ticks[current_tick][1],
-                                            storage_for_ticks.ticks[current_tick][2], storage_for_ticks.ticks[current_tick][3],
-                                            storage_for_ticks.ticks[current_tick][4]);
+        // Print to the console for debugging
+        printf("Tick: %d | %u %u %u %u\n", storage_for_ticks.ticks[ last_wake_time-starting_tick ][0], storage_for_ticks.ticks[ last_wake_time-starting_tick ][1],
+                                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][2], storage_for_ticks.ticks[ last_wake_time-starting_tick ][3],
+                                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][4]);
 
         vTaskDelayUntil(&last_wake_time, 1);
     }
@@ -816,41 +783,37 @@ void vSecondTickTask(void *pvParamters){
 
     TickType_t starting_tick = xTaskGetTickCount();
     TickType_t last_wake_time = xTaskGetTickCount();
-    TickType_t current_tick = xTaskGetTickCount();
 
     unsigned char second_tick_task_signal = 2;
 
-    printf("Starting tick task 2: %i\n", starting_tick);
+    printf("Starting tick of task 2: %i\n", starting_tick);
 
     while(1){
-        current_tick = xTaskGetTickCount() - starting_tick;
 
-        if(current_tick <= 14) {
+        if(last_wake_time-starting_tick <= 14) {
         
-            if((current_tick+1) % 2 == 0){      // second condition used to offset this task by one tick compared to the the FirstTickTask
-                xSemaphoreGive(WakeUpThirdTickTaskSignal);  // Wake up third tick task
-                if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
+            xSemaphoreGive(WakeUpThirdTickTaskSignal);  // Wake up third tick task
+            if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
 
-                    // Check which space in the row is still available and hasnt been claimed by another tick task
-                    if(storage_for_ticks.ticks[current_tick][1] == 0){
-                        storage_for_ticks.ticks[current_tick][1] = second_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][2] == 0){
-                        storage_for_ticks.ticks[current_tick][2] = second_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][3] == 0){
-                        storage_for_ticks.ticks[current_tick][3] = second_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][4] == 0){
-                        storage_for_ticks.ticks[current_tick][4] = second_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
+                // Check which space in the row is still available and hasnt been claimed by another tick task
+                if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = second_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
                 }
-                xSemaphoreTake(WakeUpThirdTickTaskSignal, 0);
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = second_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = second_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = second_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
             }
+            xSemaphoreTake(WakeUpThirdTickTaskSignal, 0);
             xSemaphoreGive(storage_for_ticks.lock);
         }
         else{
@@ -858,7 +821,7 @@ void vSecondTickTask(void *pvParamters){
             xSemaphoreGive(WakeUpThirdTickTaskSignal);
             vTaskDelete(SecondTickTask);
         }
-        vTaskDelayUntil(&last_wake_time, 1);
+        vTaskDelayUntil(&last_wake_time, 2);
     }
 
 }
@@ -867,38 +830,35 @@ void vThirdTickTask(void *pvParameters){
 
     TickType_t starting_tick = xTaskGetTickCount();
     TickType_t last_wake_time = xTaskGetTickCount();
-    TickType_t current_tick = xTaskGetTickCount();
+    printf("Starting tick of task 3: %i\n", starting_tick);
 
     unsigned char third_tick_task_signal = 3;
 
-    printf("Starting tick task 3: %i\n", starting_tick);
-
     while(1){
-        current_tick = xTaskGetTickCount() - starting_tick;
 
-        if(current_tick <= 14){
+        if(last_wake_time-starting_tick <= 14){
             if(WakeUpThirdTickTaskSignal){
                 if(xSemaphoreTake(WakeUpThirdTickTaskSignal, 0) == pdTRUE){    
                     if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
 
                         // Check which space in the row is still available and hasnt been claimed by another tick task
-                        if(storage_for_ticks.ticks[current_tick][1] == 0){
-                            storage_for_ticks.ticks[current_tick][1] = third_tick_task_signal;
+                        if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
+                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
                             xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
-                        else if(storage_for_ticks.ticks[current_tick][2] == 0){
-                            storage_for_ticks.ticks[current_tick][2] = third_tick_task_signal;
+                        else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
+                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
                             xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
-                        else if(storage_for_ticks.ticks[current_tick][3] == 0){
-                            storage_for_ticks.ticks[current_tick][3] = third_tick_task_signal;
+                        else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
+                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
                             xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
-                        else if(storage_for_ticks.ticks[current_tick][4] == 0){
-                            storage_for_ticks.ticks[current_tick][4] = third_tick_task_signal;
+                        else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
+                            storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
                             xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
@@ -919,50 +879,44 @@ void vThirdTickTask(void *pvParameters){
 void vFourthTickTask(void *pvParameters){
 
     TickType_t last_wake_time = xTaskGetTickCount();
-    TickType_t current_tick = xTaskGetTickCount();
+    TickType_t starting_tick = xTaskGetTickCount();
+    printf("Starting tick of task 4: %i\n", starting_tick);
 
     unsigned char fourth_tick_task_signal = 4;
 
-    TickType_t starting_tick = xTaskGetTickCount();
-    printf("Starting tick task 4: %i\n", starting_tick);
-
     while(1){
-        current_tick = xTaskGetTickCount() - starting_tick;
-        //printf("Current Tick: %i\n", current_tick);
 
-        if(current_tick <= 14){
+        if(last_wake_time-starting_tick <= 14){
 
             if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){          
 
-                if((current_tick+1) % 4 == 0){  // Offset the tick compared to the first tick task
-
-                    // Check which space in the row is still available and hasnt been claimed by another tick task
-                    if(storage_for_ticks.ticks[current_tick][1] == 0){
-                        storage_for_ticks.ticks[current_tick][1] = fourth_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][2] == 0){
-                        storage_for_ticks.ticks[current_tick][2] = fourth_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][3] == 0){
-                        storage_for_ticks.ticks[current_tick][3] = fourth_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
-                    else if(storage_for_ticks.ticks[current_tick][4] == 0){
-                        storage_for_ticks.ticks[current_tick][4] = fourth_tick_task_signal;
-                        xSemaphoreGive(storage_for_ticks.lock);
-                    }
+                // Check which space in the row is still available and hasnt been claimed by another tick task
+                if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = fourth_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
                 }
-                xSemaphoreGive(storage_for_ticks.lock);
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = fourth_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = fourth_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
+                else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
+                    storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = fourth_tick_task_signal;
+                    xSemaphoreGive(storage_for_ticks.lock);
+                }
             }
+            xSemaphoreGive(storage_for_ticks.lock);
+
         }
         else{
             printf("Deleting FourthTickTask.\n");
             vTaskDelete(FourthTickTask);
         }
 
-        vTaskDelayUntil(&last_wake_time, 1);
+        vTaskDelayUntil(&last_wake_time, 4);
     }
 }
 
@@ -1171,30 +1125,21 @@ int main(int argc, char *argv[])
                     mainGENERIC_PRIORITY+1, &FirstTickTask) != pdPASS) {
         goto err_first_tick_task;
     }
-    vTaskSuspend(FirstTickTask);
 
     if (xTaskCreate(vSecondTickTask, "SecondTickTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY+2, &SecondTickTask) != pdPASS) {
         goto err_second_tick_task;
     }
-   vTaskSuspend(SecondTickTask);
     
     if (xTaskCreate(vThirdTickTask, "ThirdTickTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY+3, &ThirdTickTask) != pdPASS) {
         goto err_third_tick_task;
     }
-    vTaskSuspend(ThirdTickTask);
 
     if (xTaskCreate(vFourthTickTask, "FourthTickTask", mainGENERIC_STACK_SIZE * 2, NULL,
                     mainGENERIC_PRIORITY+4, &FourthTickTask) != pdPASS)  {
         goto err_fourth_tick_task;
-    }
-    vTaskSuspend(FourthTickTask);
-
-    if (xTaskCreate(vTickTaskHandler, "TickTaskHandler", mainGENERIC_STACK_SIZE *2, NULL,
-                    configMAX_PRIORITIES-3, &TickTaskHandler) != pdPASS) {
-        goto err_tick_task_handler;
-    }     
+    }    
 
     xTimerStart(ResetButtonsFGTimer, 0);    // timer starts once the scheduler starts, but can be called here nonetheless
 
@@ -1205,8 +1150,6 @@ int main(int argc, char *argv[])
 // Exits in reverse order to init
 
 // Deleting tick tasks
-err_tick_task_handler:
-    vTaskDelete(TickTaskHandler);
 err_fourth_tick_task:
     vTaskDelete(FourthTickTask);
 err_third_tick_task:
