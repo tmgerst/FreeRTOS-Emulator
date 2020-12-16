@@ -11,6 +11,8 @@ docs/latex
 doxygen_warnings.txt
 
 bin/*
+build/
+lib/
 
 CMakeLists.txt.user
 CMakeCache.txt
