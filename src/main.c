@@ -1,3 +1,11 @@
+// #####################################################################################
+
+// Author:  Tim Gerstewitz (GitHub: tmgerst)
+// Date:    20.11.2020 - 16.12.2020
+// Project: Programming Exercises for ESPL to get to know FreeRTOS functionality
+
+// #####################################################################################
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,7 +154,9 @@ void vApplicationGetTimerTaskMemory( StaticTask_t **ppxTimerTaskTCBBuffer, Stack
     *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
 }
 
-// -------------------- Functions for functionality of the specific screen drawing tasks ---------------------------------------------------------------------------------
+
+
+// ########################### Functions for functionality of the specific screen drawing tasks ##################################################
 
 void xGetButtonInput(void)
 {
@@ -299,9 +309,11 @@ state_handling:
     }
 }
 
-// --------------------- End of functionality functions --------------------------------------------------------------------------------------------------------
+// ################################ End of functionality functions ################################################################################
 
-// ------------------- Functions for Exercise 2 ---------------------------------------------------------------------------------------------------------------------
+
+
+// ################################ Functions for Exercise 2 ######################################################################################
 
 // Calculates the offset of the mouse position relative to the center of the screen.
 coord_t offsetDueToMouse(double attenuation){
@@ -500,10 +512,12 @@ void vExerciseTwoDrawingTask(void *pvParameters){
     }
 }
 
-// ----------------------------------- End of functions for Exercise 2 -----------------------------------------------------------------------
+// ############################### End of functions for Exercise 2 #############################################################
 
-// ----------------------------------- Functions for Exercise 3 ------------------------------------------------------------------------------
 
+// ############################### Functions for Exercise 3 ####################################################################
+
+// Gives a binary sempahore periodically to signal the drawing task when it is time to draw (or not to draw) the blue circle to the screen
 void vBlueBlinkingCircle(void *pvParameters){
 
     TickType_t blue_last_wake_period = xTaskGetTickCount();
@@ -516,6 +530,7 @@ void vBlueBlinkingCircle(void *pvParameters){
     }
 }
 
+// Gives a binary semaphore periodically to signal the drawing task when it is time to draw (or not to draw) the red circle to the screen
 void vRedBlinkingCircle(void *pvParameters){
 
     TickType_t red_last_wake_time = xTaskGetTickCount();
@@ -528,11 +543,13 @@ void vRedBlinkingCircle(void *pvParameters){
     }    
 }
 
+// Checks if buttons F and G have been pressed and if so, give a binary sempahore or a task notification to the respective tasks to execute stuff.
+// Debouncing is done in the respective tasks.
 void vCheckForButtonInput(void){
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
 
-        // if A has been pressed, give binary semaphore
+        // if F has been pressed, give binary semaphore
         if(buttons.buttons[KEYCODE(F)]){
             buttons.buttons[KEYCODE(F)] = 0;
             if(ButtonFSignal){
@@ -540,7 +557,7 @@ void vCheckForButtonInput(void){
                 xSemaphoreGive(buttons.lock);
             }
         }
-        // if B has been pressed, send task notification
+        // if G has been pressed, send task notification
         if (buttons.buttons[KEYCODE(G)]){
             buttons.buttons[KEYCODE(G)] = 0;
             xTaskNotifyGive(ButtonGHandlerTask);
@@ -550,6 +567,7 @@ void vCheckForButtonInput(void){
     xSemaphoreGive(buttons.lock);
 }
 
+// Debounces button F if the signal that it is pressed is received. Increases the protected counter for button F as well.
 void vButtonFHandler(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
@@ -567,6 +585,7 @@ void vButtonFHandler(void *pvParameters){
     }
 }
 
+// Debounces button G if the task notification that it is pressed is received. Increases the protected counter for button G as well.
 void vButtonGHandler(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
@@ -582,6 +601,7 @@ void vButtonGHandler(void *pvParameters){
     }
 }
 
+// Is executed once the 15 seconds timer is up. Resets the protected button counters for buttons F and G.
 void vResetButtonsFG(void *pvParameters){
     if(xSemaphoreTake(counter.lock, 0) == pdTRUE){
         printf("Reset button counters.\n");
@@ -591,6 +611,7 @@ void vResetButtonsFG(void *pvParameters){
     xSemaphoreGive(counter.lock);
 }
 
+// Increases the protected seconds counter once every second
 void vPeriodicCounter(void *pvParameters){
     TickType_t last_wake_time = xTaskGetTickCount();
 
@@ -603,7 +624,8 @@ void vPeriodicCounter(void *pvParameters){
     }
 }
 
-// state = 1: task is running | state = 0: task is suspended
+// Resumes/suspends the seconds counter if button S has been pressed and changes the state variable accordingly 
+// Input: state = 1: task is running | state = 0: task is suspended
 void vCheckForPeriodicCounter(unsigned char *state){
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
@@ -724,10 +746,14 @@ void vExerciseThreeDrawingTask(void *pvParameter){
     }
 }
 
-// ------------------------------ End of Functions for Exercise 3 ---------------------------------------------------------------------------------
+// ################################### End of Functions for Exercise 3 #######################################################################
 
-// ------------------------------- Functions for Exercise 4 -----------------------------------------------------------------------------------------
 
+
+// ################################### Functions for Exercise 4 ##############################################################################
+
+// Writes 1 every tick to the protected tick array. Also writes the respective ticks to the array and prints the contents
+// of the current row to the terminal every tick. Deletes itself after 15 ticks.
 void vFirstTickTask(void *pvParameters){
 
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -746,18 +772,26 @@ void vFirstTickTask(void *pvParameters){
                 storage_for_ticks.ticks[ last_wake_time-starting_tick ][0] = last_wake_time;
                 
                 // Check which space in the row is still available and hasnt been claimed by another tick task
+            
+                // First space free?
                 if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Second space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Third space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Fourth space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = first_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
@@ -779,6 +813,8 @@ void vFirstTickTask(void *pvParameters){
     }
 }
 
+// Writes 2 every second tick to the tick array. Also gives a binary sempahore every second tick to the third tick task to 
+// signal time for execution. Deletes itself after 15 ticks.
 void vSecondTickTask(void *pvParamters){
 
     TickType_t starting_tick = xTaskGetTickCount();
@@ -796,24 +832,32 @@ void vSecondTickTask(void *pvParamters){
             if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
 
                 // Check which space in the row is still available and hasnt been claimed by another tick task
+
+                // First space free?
                 if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = second_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Second space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = second_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Third space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = second_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
+
+                // Fourth space free?
                 else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
                     storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = second_tick_task_signal;
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
             }
-            xSemaphoreTake(WakeUpThirdTickTaskSignal, 0);
+            //xSemaphoreTake(WakeUpThirdTickTaskSignal, 0);
             xSemaphoreGive(storage_for_ticks.lock);
         }
         else{
@@ -826,6 +870,7 @@ void vSecondTickTask(void *pvParamters){
 
 }
 
+// Writes 3 to the tick array once it receives the signal from the second tick task. Deletes itself after 15 ticks.
 void vThirdTickTask(void *pvParameters){
 
     TickType_t starting_tick = xTaskGetTickCount();
@@ -835,47 +880,50 @@ void vThirdTickTask(void *pvParameters){
     unsigned char third_tick_task_signal = 3;
 
     while(1){
-
-        if(last_wake_time-starting_tick <= 14){
-            if(WakeUpThirdTickTaskSignal){
-                if(xSemaphoreTake(WakeUpThirdTickTaskSignal, 0) == pdTRUE){    
+        if(WakeUpThirdTickTaskSignal){
+            if(xSemaphoreTake(WakeUpThirdTickTaskSignal, portMAX_DELAY) == pdTRUE){                 
+                last_wake_time = xTaskGetTickCount();   // Update time
+                if(last_wake_time-starting_tick <= 14){  
                     if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE){
 
                         // Check which space in the row is still available and hasnt been claimed by another tick task
+
+                        // First space free?
                         if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] == 0){
                             storage_for_ticks.ticks[ last_wake_time-starting_tick ][1] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
-                            xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
+
+                        // Second space free?
                         else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] == 0){
                             storage_for_ticks.ticks[ last_wake_time-starting_tick ][2] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
-                            xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
+
+                        // Third space free?
                         else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] == 0){
                             storage_for_ticks.ticks[ last_wake_time-starting_tick ][3] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
-                            xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
+
+                        // Fourth space free?
                         else if(storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] == 0){
                             storage_for_ticks.ticks[ last_wake_time-starting_tick ][4] = third_tick_task_signal;
                             xSemaphoreGive(storage_for_ticks.lock);
-                            xSemaphoreGive(WakeUpThirdTickTaskSignal);
                         }
                     }
                     xSemaphoreGive(storage_for_ticks.lock);
                 }
-                xSemaphoreGive(WakeUpThirdTickTaskSignal);
+                else{
+                    printf("Deleting ThirdTickTask.\n");
+                    vTaskDelete(ThirdTickTask);
+                }
             }
         }
-        else{
-            printf("Deleting ThirdTickTask.\n");
-            vTaskDelete(ThirdTickTask);
-        }
-        vTaskDelayUntil(&last_wake_time, 1);
     }
 }
 
+// Writes 4 to the tick array every fourth tick. Deletes itself after 15 ticks.
 void vFourthTickTask(void *pvParameters){
 
     TickType_t last_wake_time = xTaskGetTickCount();
@@ -920,6 +968,8 @@ void vFourthTickTask(void *pvParameters){
     }
 }
 
+// Draws a row of a twodimensional array to the screen using the tumDraw API.
+// Input:   arr: the row of the array that is to be drawn. | line_number: the row number of the array row.
 void drawALineOfTicks(char* arr, int line_number){
     sprintf(arr, "Tick: %d | %u %u %u %u", storage_for_ticks.ticks[line_number][0],
                                                     storage_for_ticks.ticks[line_number][1],
@@ -932,6 +982,7 @@ void drawALineOfTicks(char* arr, int line_number){
 
 void vExerciseFourDrawingTask(void *pvParameters){
 
+    // Headline for screen
     char third_text[50] = "Output of the tick tasks";
     int third_text_width = 0;
     tumGetTextSize((char *) third_text, &third_text_width, NULL); 
@@ -948,6 +999,7 @@ void vExerciseFourDrawingTask(void *pvParameters){
                 
                 tumDrawClear(White);
 
+                // Draw contents of the protected tick array
                 if(xSemaphoreTake(storage_for_ticks.lock, 0) == pdTRUE) {
                     for (int i = 0; i <= 14; i++) {
                         drawALineOfTicks(tick_output[i], i);
@@ -955,6 +1007,7 @@ void vExerciseFourDrawingTask(void *pvParameters){
                 }
                 xSemaphoreGive(storage_for_ticks.lock);
                 
+                // Draw headline for the screen
                 if (!tumGetTextSize((char *)third_text, &third_text_width, NULL)){
                     tumDrawText(third_text, SCREEN_WIDTH/2 - third_text_width/2, DEFAULT_FONT_SIZE, Orange);
                 }
@@ -967,7 +1020,9 @@ void vExerciseFourDrawingTask(void *pvParameters){
     }
 }
 
-// ------------------------------- End of functions for Exercise 4 ---------------------------------------------------------------------------------
+// ################################# End of functions for Exercise 4 #############################################################
+
+
 
 int main(int argc, char *argv[])
 {
@@ -1038,7 +1093,7 @@ int main(int argc, char *argv[])
         goto err_red_circle_signal;
     }
 
-    ButtonFSignal = xSemaphoreCreateBinary(); // Semaphore for signaling that button A is pressed
+    ButtonFSignal = xSemaphoreCreateBinary(); // Semaphore for signaling that button F is pressed
     if (!ButtonFSignal){
         PRINT_ERROR("Failed to create button F signal.");
         goto err_button_f_signal;        
