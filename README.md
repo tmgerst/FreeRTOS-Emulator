@@ -17,19 +17,19 @@ when the tick interrupt is restarted. This can be used to save power.
 
 ### Exercise 3.2
 
-### Exercise 3.2.2
+#### Exercise 3.2.2
 
 The task handling the blue circle signals has a +1 priority compared to the task responsible for the red circle signals.
 
 What happens if the stack size for a statically allocated task is too low?
 > The task stack overflows.
 
-### Exercise 3.2.3
+#### Exercise 3.2.3
 
 First button used:   F (uses a binary semaphore for the corresponding counter task)      
 Second button used:  G (uses a task notification for the corresponding counter task)
 
-### Exercise 3.2.4
+#### Exercise 3.2.4
 
 Button used: S
 
