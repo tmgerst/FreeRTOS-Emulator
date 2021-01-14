@@ -10,7 +10,8 @@ docs/latex
 
 doxygen_warnings.txt
 
-bin/*
+bin/
+build/
 
 CMakeLists.txt.user
 CMakeCache.txt
