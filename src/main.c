@@ -110,6 +110,128 @@ void drawTile(int pos_x, int pos_y, tile_t* colored_tile){
 }
 
 
+typedef struct t_or_table_t{
+    int or_T[4][4][2];  // 4 configurations of 4 points (2 coordinates) that need to be colored
+    int or_J[4][4][2];
+    int or_Z[2][4][2];
+    int or_O[1][4][2];
+    int or_S[2][4][2];
+    int or_L[4][4][2];
+    int or_I[2][4][2];
+    SemaphoreHandle_t lock;
+} t_or_table_t;
+
+t_or_table_t orientation_table = { 0 };
+
+t_or_table_t initOrientationTable(t_or_table_t* or){
+
+    // ------------------ T structure orientations-------------------------------------------------------
+    or->or_T[0][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[0][0][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][1][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_T[0][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][2][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[0][3][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    or->or_T[1][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[1][0][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[1][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[1][2][1] = TETRIMINO_GRID_CENTER+1;
+    or->or_T[1][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[1][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_T[2][0][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][0][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_T[2][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[2][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][2][1] = TETRIMINO_GRID_CENTER+1;
+    or->or_T[2][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[2][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_T[3][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[3][0][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[3][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[3][1][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_T[3][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[3][2][1] = TETRIMINO_GRID_CENTER;
+    or->or_T[3][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[3][3][1] = TETRIMINO_GRID_CENTER;
+
+    // ----------------------- J structure orientations ---------------------------------------------------
+    or->or_J[0][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_J[0][0][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_J[0][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[0][2][0] = TETRIMINO_GRID_CENTER+1;    or->or_J[0][2][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_J[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_J[0][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_J[1][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_J[1][0][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_J[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_J[1][1][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_J[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_J[1][2][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[1][3][0] = TETRIMINO_GRID_CENTER;      or->or_J[1][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    or->or_J[2][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_J[2][0][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[2][1][0] = TETRIMINO_GRID_CENTER-1;    or->or_J[2][1][1] = TETRIMINO_GRID_CENTER+1;
+    or->or_J[2][2][0] = TETRIMINO_GRID_CENTER;      or->or_J[2][2][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[2][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_J[2][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_J[3][0][0] = TETRIMINO_GRID_CENTER;      or->or_J[3][0][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_J[3][1][0] = TETRIMINO_GRID_CENTER;      or->or_J[3][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_J[3][2][0] = TETRIMINO_GRID_CENTER;      or->or_J[3][2][1] = TETRIMINO_GRID_CENTER+1;
+    or->or_J[3][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_J[3][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    // ----------------- Z structure orientations ----------------------------------------------------------
+    or->or_Z[0][0][0] = TETRIMINO_GRID_CENTER;      or->or_Z[0][0][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_Z[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_Z[0][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_Z[0][2][0] = TETRIMINO_GRID_CENTER+1;    or->or_Z[0][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_Z[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_Z[0][3][1] = TETRIMINO_GRID_CENTER+1; 
+
+    or->or_Z[1][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_Z[1][0][1] = TETRIMINO_GRID_CENTER+1; 
+    or->or_Z[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_Z[1][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_Z[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_Z[1][2][1] = TETRIMINO_GRID_CENTER+1; 
+    or->or_Z[1][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_Z[1][3][1] = TETRIMINO_GRID_CENTER;
+
+    // ------------------ O structure orientations -----------------------------------------------------------
+    or->or_O[0][0][0] = TETRIMINO_GRID_CENTER;      or->or_O[0][0][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_O[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_O[0][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_O[0][2][0] = TETRIMINO_GRID_CENTER+1;    or->or_O[0][2][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_O[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_O[0][3][1] = TETRIMINO_GRID_CENTER; 
+
+    // -------------- S structure orientations -----------------------------------------------------------
+    or->or_S[0][0][0] = TETRIMINO_GRID_CENTER;      or->or_S[0][0][1] = TETRIMINO_GRID_CENTER; 
+    or->or_S[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_S[0][1][1] = TETRIMINO_GRID_CENTER+1;
+    or->or_S[0][2][0] = TETRIMINO_GRID_CENTER+1;    or->or_S[0][2][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_S[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_S[0][3][1] = TETRIMINO_GRID_CENTER; 
+
+    or->or_S[1][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_S[1][0][1] = TETRIMINO_GRID_CENTER; 
+    or->or_S[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_S[1][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_S[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_S[1][2][1] = TETRIMINO_GRID_CENTER+1; 
+    or->or_S[1][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_S[1][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    // -------------- L structure orientations ------------------------------------------------------------------------
+    or->or_L[0][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_L[0][0][1] = TETRIMINO_GRID_CENTER; 
+    or->or_L[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_L[0][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_L[0][2][0] = TETRIMINO_GRID_CENTER+1;    or->or_L[0][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_L[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_L[0][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    or->or_L[1][0][0] = TETRIMINO_GRID_CENTER;      or->or_L[1][0][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_L[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_L[1][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_L[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_L[1][2][1] = TETRIMINO_GRID_CENTER+1; 
+    or->or_L[1][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_L[1][3][1] = TETRIMINO_GRID_CENTER-1;
+
+    or->or_L[2][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_L[2][0][1] = TETRIMINO_GRID_CENTER-1; 
+    or->or_L[2][1][0] = TETRIMINO_GRID_CENTER-1;    or->or_L[2][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_L[2][2][0] = TETRIMINO_GRID_CENTER;      or->or_L[2][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_L[2][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_L[2][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_L[3][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_L[3][0][1] = TETRIMINO_GRID_CENTER+1; 
+    or->or_L[3][1][0] = TETRIMINO_GRID_CENTER;      or->or_L[3][1][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_L[3][2][0] = TETRIMINO_GRID_CENTER;      or->or_L[3][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_L[3][3][0] = TETRIMINO_GRID_CENTER;      or->or_L[3][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    // ------------------ I structure orientations ------------------------------------------------------------------
+    or->or_I[0][0][0] = TETRIMINO_GRID_CENTER-2;    or->or_I[0][0][1] = TETRIMINO_GRID_CENTER; 
+    or->or_I[0][1][0] = TETRIMINO_GRID_CENTER-1;    or->or_I[0][1][1] = TETRIMINO_GRID_CENTER;
+    or->or_I[0][2][0] = TETRIMINO_GRID_CENTER;      or->or_I[0][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_I[0][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_I[0][3][1] = TETRIMINO_GRID_CENTER;
+
+    or->or_I[1][0][0] = TETRIMINO_GRID_CENTER;      or->or_I[1][0][1] = TETRIMINO_GRID_CENTER-2; 
+    or->or_I[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_I[1][1][1] = TETRIMINO_GRID_CENTER-1;
+    or->or_I[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_I[1][2][1] = TETRIMINO_GRID_CENTER; 
+    or->or_I[1][3][0] = TETRIMINO_GRID_CENTER;      or->or_I[1][3][1] = TETRIMINO_GRID_CENTER+1;
+
+    // Some more orientations
+    return *or;
+}
+
+
 typedef struct play_area {
     tile_t tiles[PLAY_AREA_HEIGHT_IN_TILES][PLAY_AREA_WIDTH_IN_TILES];
     int size_x;
@@ -177,21 +299,101 @@ void clearTetriminoGrid(tetrimino_t* t){
     }
 }
 
-tetrimino_t initTetrimino(tetrimino_t* t, char name, unsigned int color){
+/* Helper function to make code more readable */
+void copyOrientationIntoTetriminoGrid(int array[][4][2], tetrimino_t* t, int desired_orientation){
+        t->grid[array[desired_orientation][0][0]][array[desired_orientation][0][1]] = t->color;
+        t->grid[array[desired_orientation][1][0]][array[desired_orientation][1][1]] = t->color;
+        t->grid[array[desired_orientation][2][0]][array[desired_orientation][2][1]] = t->color;
+        t->grid[array[desired_orientation][3][0]][array[desired_orientation][3][1]] = t->color;
+
+        t->orientation = desired_orientation;
+}
+
+void setTetriminoGridViaOrientation(t_or_table_t* or, tetrimino_t* t, int desired_orientation){
+    char name = t->name;
+
+    if (name == 'T'){
+        clearTetriminoGrid(t);
+        if (desired_orientation > 3){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 3; }
+
+        copyOrientationIntoTetriminoGrid(or->or_T, t, desired_orientation);
+    }
+    else if (name == 'J'){
+        clearTetriminoGrid(t);
+        if (desired_orientation > 3){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 3; }
+
+        copyOrientationIntoTetriminoGrid(or->or_J, t, desired_orientation);
+    }
+    else if (name == 'Z'){
+        clearTetriminoGrid(t);
+
+        if (desired_orientation > 1){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 1; }
+
+        copyOrientationIntoTetriminoGrid(or->or_Z, t, desired_orientation);
+    }
+    else if (name == 'O'){
+        clearTetriminoGrid(t);
+
+        if (desired_orientation != 0){ desired_orientation = 0; }
+
+        copyOrientationIntoTetriminoGrid(or->or_O, t, desired_orientation);
+    }
+    else if (name == 'S'){
+        clearTetriminoGrid(t);
+
+        if (desired_orientation > 1){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 1; }
+
+        copyOrientationIntoTetriminoGrid(or->or_S, t, desired_orientation);
+    }
+    else if (name == 'L'){
+        clearTetriminoGrid(t);
+
+        if (desired_orientation > 3){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 3; }
+
+        copyOrientationIntoTetriminoGrid(or->or_L, t, desired_orientation);
+    }
+    else if (name == 'I'){
+        clearTetriminoGrid(t);
+
+        if (desired_orientation > 1){ desired_orientation = 0; }
+        if (desired_orientation < 0){ desired_orientation = 1; }
+
+        copyOrientationIntoTetriminoGrid(or->or_I, t, desired_orientation);
+    }
+}
+
+tetrimino_t initTetrimino(t_or_table_t* or, tetrimino_t* t, char name, unsigned int color){
     t->name = name;
     t->color = color;
     t->playfield_row = 0;
     t->playfield_column = 0;
 
     clearTetriminoGrid(t);
-
-    if (t->name == 'T'){
-        t->grid[TETRIMINO_GRID_CENTER][TETRIMINO_GRID_CENTER-1] = color;
-        t->grid[TETRIMINO_GRID_CENTER][TETRIMINO_GRID_CENTER] = color;
-        t->grid[TETRIMINO_GRID_CENTER][TETRIMINO_GRID_CENTER+1] = color;
-        t->grid[TETRIMINO_GRID_CENTER+1][TETRIMINO_GRID_CENTER] = color;
-
-        t->orientation = 2;
+    if (name == 'T'){
+        setTetriminoGridViaOrientation(or, t, 2);
+    }
+    else if (name == 'J'){
+        setTetriminoGridViaOrientation(or, t, 3);
+    }
+    else if (name == 'Z'){
+        setTetriminoGridViaOrientation(or, t, 0);
+    }
+    else if (name == 'O'){
+        setTetriminoGridViaOrientation(or, t, 0);
+    }
+    else if (name == 'S'){
+        setTetriminoGridViaOrientation(or, t, 0);
+    }
+    else if (name == 'L'){
+        setTetriminoGridViaOrientation(or, t, 1);
+    }
+    else if (name == 'I'){
+        setTetriminoGridViaOrientation(or, t, 1);
     }
 
     return *t;
@@ -221,46 +423,6 @@ int tetriminoColumnToPlayfieldColumn(tetrimino_t* t, int offset){
     return t->playfield_column - TETRIMINO_GRID_CENTER + offset;
 }
 
-
-typedef struct t_or_table_t{
-    int or_T[4][4][2];  // 4 configurations of 4 points (2 coordinates) that need to be colored
-    int or_J[4][4][2];
-    int or_Z[2][4][2];
-    int or_O[1][4][2];
-    int or_S[2][4][2];
-    int or_L[4][4][2];
-    int or_I[2][4][2];
-    SemaphoreHandle_t lock;
-} t_or_table_t;
-
-t_or_table_t orientation_table = { 0 };
-
-t_or_table_t initOrientationTable(t_or_table_t* or){
-
-    // T structure orientations
-    or->or_T[0][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[0][0][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[0][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][1][1] = TETRIMINO_GRID_CENTER-1;
-    or->or_T[0][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][2][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[0][3][0] = TETRIMINO_GRID_CENTER;      or->or_T[0][3][1] = TETRIMINO_GRID_CENTER+1;
-
-    or->or_T[1][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[1][0][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[1][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[1][1][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[1][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[1][2][1] = TETRIMINO_GRID_CENTER+1;
-    or->or_T[1][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[1][3][1] = TETRIMINO_GRID_CENTER;
-
-    or->or_T[2][0][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][0][1] = TETRIMINO_GRID_CENTER-1;
-    or->or_T[2][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][1][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[2][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[2][2][1] = TETRIMINO_GRID_CENTER+1;
-    or->or_T[2][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[2][3][1] = TETRIMINO_GRID_CENTER;
-
-    or->or_T[3][0][0] = TETRIMINO_GRID_CENTER-1;    or->or_T[3][0][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[3][1][0] = TETRIMINO_GRID_CENTER;      or->or_T[3][1][1] = TETRIMINO_GRID_CENTER-1;
-    or->or_T[3][2][0] = TETRIMINO_GRID_CENTER;      or->or_T[3][2][1] = TETRIMINO_GRID_CENTER;
-    or->or_T[3][3][0] = TETRIMINO_GRID_CENTER+1;    or->or_T[3][3][1] = TETRIMINO_GRID_CENTER;
-
-    // Some more orientations
-    return *or;
-}
 
 /* 
 ######################################################################
@@ -340,25 +502,6 @@ void removeTetriminoColorsFromCurrentPosition(play_area_t* playfield, tetrimino_
     }
 }
 
-void setTetriminoGridViaOrientation(t_or_table_t* or, tetrimino_t* t, int desired_orientation){
-    char name = t->name;
-
-    if (name == 'T'){
-        clearTetriminoGrid(t);
-
-        if (desired_orientation > 3){ desired_orientation = 0; }
-        if (desired_orientation < 0){ desired_orientation = 3; }
-
-        t->grid[or->or_T[desired_orientation][0][0]][or->or_T[desired_orientation][0][1]] = t->color;
-        t->grid[or->or_T[desired_orientation][1][0]][or->or_T[desired_orientation][1][1]] = t->color;
-        t->grid[or->or_T[desired_orientation][2][0]][or->or_T[desired_orientation][2][1]] = t->color;
-        t->grid[or->or_T[desired_orientation][3][0]][or->or_T[desired_orientation][3][1]] = t->color;
-
-        t->orientation = desired_orientation;
-    }
-}
-
-
 void checkForButtonInput(void){
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
@@ -403,15 +546,20 @@ void checkForButtonInput(void){
 
 
 void vSpawnTetrimino(void *pvParameters){
-    // Hier eine queue einfügen über die das nächste Tetrimino ankommt
+    // Hier eine queue einfügen über die das nächste Tetrimino ankommt und die Farbe
 
     while(1){
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         if(tetrimino.lock){
             if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){   
+                
+                if(orientation_table.lock){
+                    if(xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
+                        tetrimino = initTetrimino(&orientation_table, &tetrimino, 'L', Green); 
+                    }
+                }
 
-                tetrimino = initTetrimino(&tetrimino, 'T', Cyan);
                 setPositionOfTetriminoViaCenter(&tetrimino, SPAWN_ROW, SPAWN_COLUMN);
 
                 if (playfield.lock) {
@@ -872,7 +1020,6 @@ void vStatePlayingControl(void *pvParameters){
     tumGetTextSize((char *) text, &text_width, NULL);
 
     playfield = initPlayArea(&playfield);
-    tetrimino = initTetrimino(&tetrimino, 'T', Cyan);   // hardcoded, to be changed
     orientation_table = initOrientationTable(&orientation_table);
 
     xTaskNotifyGive(SpawnTetriminoTask);
