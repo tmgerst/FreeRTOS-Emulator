@@ -69,14 +69,29 @@
  *
  * @{
  */
-#define Red (unsigned int) 0xFF0000
-#define Green (unsigned int) 0x00FF00
-#define Blue (unsigned int) 0x0000FF
-#define Yellow (unsigned int) 0xFFFF00
-#define Aqua (unsigned int) 0x00FFFF
-#define Fuchsia (unsigned int) 0xFF00FF
-#define White (unsigned int) 0xFFFFFF
-#define Black (unsigned int) 0x000000
+#define TUMBlue (unsigned int)(0x0065bd)
+#define Red (unsigned int)(0xFF0000)
+#define Green (unsigned int)(0x00FF00)
+#define Blue (unsigned int)(0x0000FF)
+#define Yellow (unsigned int)(0xFFFF00)
+#define Aqua (unsigned int)(0x00FFFF)
+#define Fuchsia (unsigned int)(0xFF00FF)
+#define White (unsigned int)(0xFFFFFF)
+#define Black (unsigned int)(0x000000)
+#define Gray (unsigned int)(0x808080)
+#define Grey Gray
+#define Magenta Fuchsia
+#define Cyan Aqua
+#define Lime (unsigned int)(0x00FF00)
+#define Maroon (unsigned int)(0x800000)
+#define Navy (unsigned int)(0x000080)
+#define Olive (unsigned int)(0x808000)
+#define Purple (unsigned int)(0x800080)
+#define Silver (unsigned int)(0xC0C0C0)
+#define Teal (unsigned int)(0x008080)
+#define Orange (unsigned int)(0xFFA500)
+#define Pink (unsigned int)(0xFFC0CB)
+#define Skyblue (unsigned int)(0x87CEEB)
 /**@}*/
 
 /**

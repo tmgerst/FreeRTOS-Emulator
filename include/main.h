@@ -3,10 +3,11 @@
 
 #include "semphr.h"
 #include "queue.h"
+#include <SDL2/SDL_scancode.h>
 
-#define NEXT_TASK 0
-#define PREV_TASK 1
+#define NEXT_TASK 1
 
+#define KEYCODE(CHAR) SDL_SCANCODE_##CHAR
 #define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
 
 extern const unsigned char next_state_signal;
