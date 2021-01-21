@@ -11,12 +11,12 @@
 #define PRINT_TASK_ERROR(task) PRINT_ERROR("Failed to print task ##task");
 
 extern const unsigned char next_state_signal;
-extern const unsigned char prev_state_signal;
+// extern const unsigned char prev_state_signal;
 
 extern SemaphoreHandle_t ScreenLock;
 extern SemaphoreHandle_t DrawSignal;
 
-extern QueueHandle_t StateQueue;
+extern QueueHandle_t StateMachineQueue;
 
 void vDrawFPS(void);
 
