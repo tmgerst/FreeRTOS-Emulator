@@ -106,6 +106,7 @@ typedef struct tetrimino_t {
 } tetrimino_t;
 
 
+
 buttons_buffer_t buttons = { 0 };
 t_or_table_t orientation_table = { 0 };
 play_area_t playfield = { 0 };
@@ -451,6 +452,12 @@ int checkTetriminoPosition(play_area_t* p, tetrimino_t* t){
                 corresponding_p_column = tetriminoColumnToPlayfieldColumn(t, c);
                 // printf("Computed playfield position: %i %i\n", corresponding_p_row, corresponding_p_column);
 
+                // Check if the space is already occupied 
+                if (p->tiles[corresponding_p_row][corresponding_p_column].color != 0){
+                    printf("Position already occupied.\n");
+                    return -1;
+                }
+
                 // Tetrimino is above or under the play area --> error
                 if ((corresponding_p_row < 0) || (corresponding_p_row >= PLAY_AREA_HEIGHT_IN_TILES)){
                     printf("Row error.\n");
@@ -461,12 +468,6 @@ int checkTetriminoPosition(play_area_t* p, tetrimino_t* t){
                 // Check if the Tetrimino crosses the bounds of the playarea to the left or right --> game over
                 if ((corresponding_p_column < 0 || (corresponding_p_column >= PLAY_AREA_WIDTH_IN_TILES))){
                     printf("Column out of bounds.\n");
-                    return -1;
-                }
-                
-                // Check if the space is already occupied 
-                if (p->tiles[corresponding_p_row][corresponding_p_column].color != 0){
-                    printf("Position already occupied.\n");
                     return -1;
                 }
             }
@@ -532,6 +533,42 @@ unsigned int chooseColorForTetrimino(char name){
             return White;
     }   
 }
+
+void clearFullyColoredLines(play_area_t* playfield){
+    int offset = 0;
+    int flag = 0;
+    printf("Call to line clearing function.\n");
+    for (int r = PLAY_AREA_HEIGHT_IN_TILES-1; r >= 0; r--){
+
+        if (r == offset-1){
+            break;
+        }  
+
+        for (int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
+
+            playfield->tiles[r+offset][c].color = playfield->tiles[r][c].color;   // copy down colors
+            if (playfield->tiles[r+offset][c].color == 0){
+                flag = 1;   // if a non colored tile is in the row, raise flag to indicate it is noto fully colored
+            }
+        }
+
+        if (flag == 0){ // if row is fully colored
+        printf("Line to clear: %i\n", r);
+            offset++;   // raise the number of lines that have been discovered
+            printf("Offset: %i\n", offset);
+        }
+        flag = 0;               
+    }
+
+    if (offset > 0){
+        for (int i = 0; i < offset; i++){
+            for (int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
+                playfield->tiles[i][c].color = 0;    // color the rows at the top that are now empty because some lines have fallen down 
+            }
+        }
+    }
+}
+
 
 
 
@@ -696,7 +733,7 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
                             setPositionOfTetriminoViaCenter(&tetrimino, backup_row+1, backup_column);
                             flag = checkTetriminoPosition(&playfield, &tetrimino);
                             
-                            if (flag == -1){
+                            if (flag == -1){    // error when trying to move down --> tetrimino was supported in the previous position 
                                 setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
                             }
                             transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
@@ -705,6 +742,7 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
                             xSemaphoreGive(tetrimino.lock);
 
                             if (flag == 1){
+                                printf("Activate Timer.\n");
                                 xTimerReset(LockingTetriminoTimer, 0);
                             }
 
@@ -806,7 +844,7 @@ void vMoveTetriminoToTheLeft(void *pvParameters){
                             if (flag == 1){
                                 xTimerReset(LockingTetriminoTimer, 0);
                             }
-                            
+
                             backup_row = 0;
                             backup_column = 0;
                         }
@@ -930,25 +968,9 @@ void vRotateTetriminoCCW(void *pvParameters){
 }
 
 void vLockingTetriminoIntoPlace(void *pvParameters){
-    if(tetrimino.lock){
-        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
-            
-            if (playfield.lock){
-                if (xSemaphoreTake(playfield.lock, 0)){
-                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-                }
-                xSemaphoreGive(playfield.lock);
-                xSemaphoreGive(tetrimino.lock);
-
-                // Give notification to line clearing task
-
-                xTaskNotifyGive(SpawnTetriminoTask);
-                xTimerStop(LockingTetriminoTimer, 0);
-            }
-            xSemaphoreGive(playfield.lock);
-        }
-    }
-    xSemaphoreGive(tetrimino.lock);
+    printf("Send locking.\n");
+    xTaskNotifyGive(TetrisStatePlayingTask);
+    xTimerStop(LockingTetriminoTimer, 0);
 }
 
 
@@ -974,6 +996,31 @@ void vTetrisStatePlaying(void *pvParameters){
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
                 tumDrawClear(Gray);
+
+                // if locking request has been received
+                if (xTaskNotifyStateClear(NULL) == pdTRUE){
+
+                    if(tetrimino.lock){
+                        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+                            
+                            if (playfield.lock){
+                                if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+                                    clearFullyColoredLines(&playfield);
+                                    xSemaphoreGive(playfield.lock);
+                                    xSemaphoreGive(tetrimino.lock);
+
+                                    xTaskNotifyGive(SpawnTetriminoTask);
+                                    xTimerStop(LockingTetriminoTimer, 0);
+                                }
+                            }
+                            xSemaphoreGive(playfield.lock);
+                        }
+                    }
+                    xSemaphoreGive(tetrimino.lock);
+
+                }
+
                 if (playfield.lock){
                     if (xSemaphoreTake(playfield.lock, portMAX_DELAY) == pdTRUE){
                         drawPlayArea(&playfield);
@@ -1053,7 +1100,7 @@ int tetrisInit(void){
 
     orientation_table.lock = xSemaphoreCreateMutex();
     if (!orientation_table.lock){
-        PRINT_ERROR("Failed to create orientation table lock");
+        PRINT_ERROR("Failed to create orientation table lock.");
         goto err_orientation_table_lock;
     }
 
