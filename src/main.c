@@ -24,23 +24,36 @@
 #define STATE_QUEUE_LENGTH 1
 
 #define STARTING_STATE 0
-#define STATE_PLAYING 0
-#define STATE_PAUSED 1
 
-#define STATE_CHANGE_DELAY 300
+#define MAIN_MENU               0
+#define STATE_SINGLE_PLAYING    1
+#define STATE_SINGLE_PAUSED     2
+#define STATE_DOUBLE_PLAYING    3
+#define STATE_DOUBLE_PAUSED     4
+#define STATE_GAME_OVER         5
 
-#define NUMBER_OF_STATES 2
+#define STATE_CHANGE_DELAY 150
+
+#define NUMBER_OF_STATES 6
 
 #ifdef TRACE_FUNCTIONS
 #include "tracer.h"
 #endif
 
-const unsigned char next_state_signal = NEXT_TASK;
-
 static TaskHandle_t SequentialStateMachine = NULL;
 static TaskHandle_t BufferSwap = NULL;
 
 QueueHandle_t StateMachineQueue = NULL;
+
+const unsigned char main_menu_signal = MAIN_MENU;
+const unsigned char single_playing_signal = STATE_SINGLE_PLAYING;
+const unsigned char single_paused_signal = STATE_SINGLE_PAUSED;
+const unsigned char double_playing_signal = STATE_DOUBLE_PLAYING;
+const unsigned char double_paused_signal = STATE_DOUBLE_PAUSED;
+const unsigned char game_over_signal = STATE_GAME_OVER;
+
+
+states_t current_state = { 0 };
 
 
 void checkDraw(unsigned char status, const char *msg)
@@ -136,23 +149,45 @@ void vSwapBuffers(void *pvParameters)
 
 // State Machine Functionality ###################################
 
+unsigned char getCurrentState(states_t* state){
+    return state->state;
+}
+
 void changingStateAfterInput(unsigned char *state, unsigned char queue_input){
-    if(*state + queue_input >= NUMBER_OF_STATES){
-        *state = STATE_PLAYING;
-    }
-    else{
-        *state = *state + queue_input;
+    *state = queue_input;
+    if (*state >= NUMBER_OF_STATES || *state < STARTING_STATE){
+        printf("State error. Exiting to main menu.\n");
+        *state = STARTING_STATE;
     }
 }
 
-void vSequentialStateMachine(void *pvParameters){
-    unsigned char current_state = STARTING_STATE;
+void vStateMachine(void *pvParameters){
+    unsigned char state_at_the_moment = 0;
     unsigned char queue_input = 0;
     unsigned char change_state = 1;
+
+    // Set initial state
+    if (current_state.lock){
+        if (xSemaphoreTake(current_state.lock, 0) == pdTRUE){
+            current_state.state = STARTING_STATE;
+            printf("Initial state: %u\n", current_state.state);
+            xSemaphoreGive(current_state.lock);
+        }
+        xSemaphoreGive(current_state.lock);
+    }
 
     TickType_t last_state_change = xTaskGetTickCount();
 
     while(1){
+        // get current state
+        if (current_state.lock){
+            if (xSemaphoreTake(current_state.lock, 0) == pdTRUE){
+                state_at_the_moment = getCurrentState(&current_state);
+                xSemaphoreGive(current_state.lock);
+            }
+            xSemaphoreGive(current_state.lock);
+        }
+
         if(change_state != 0){
             goto state_handling;
         }
@@ -161,9 +196,17 @@ void vSequentialStateMachine(void *pvParameters){
             if (xQueueReceive(StateMachineQueue, &queue_input, portMAX_DELAY) == pdTRUE){
 
                 if (xTaskGetTickCount() - last_state_change > STATE_CHANGE_DELAY){
-                    changingStateAfterInput(&current_state, queue_input);
-                    change_state = 1;
-                    last_state_change = xTaskGetTickCount();
+
+                    if (current_state.lock){
+                        if (xSemaphoreTake(current_state.lock, portMAX_DELAY) == pdTRUE){
+                            changingStateAfterInput(&(current_state.state), queue_input);
+                            state_at_the_moment = getCurrentState(&current_state);
+                            change_state = 1;
+                            last_state_change = xTaskGetTickCount();
+                            xSemaphoreGive(current_state.lock);
+                        }
+                        xSemaphoreGive(current_state.lock);
+                    }
                 }
             }
         }
@@ -171,12 +214,33 @@ void vSequentialStateMachine(void *pvParameters){
 state_handling:
         if(StateMachineQueue){
             if(change_state != 0){
-                switch(current_state){
+                printf("Current state: %u\n", state_at_the_moment);
+                switch(state_at_the_moment){
 
-                    case STATE_PLAYING:
+                    case MAIN_MENU:
                         vTaskSuspend(TetrisStatePausedTask);
+                        vTaskSuspend(GameOverScreenTask);
+
+                        vTaskSuspend(TetrisStatePlayingTask);
+                        vTaskSuspend(GenerateTetriminoPermutationsTask);
+                        vTaskSuspend(SpawnTetriminoTask);
+                        vTaskSuspend(MoveTetriminoOneDownTask);
+                        vTaskSuspend(MoveTetriminoToTheRightTask);
+                        vTaskSuspend(MoveTetriminoToTheLeftTask);
+                        vTaskSuspend(RotateTetriminoCWTask);
+                        vTaskSuspend(RotateTetriminoCCWTask);
+                        vTaskSuspend(ResetGameTask);
+
+                        vTaskResume(MainMenuTask);
+                        break;                        
+
+                    case STATE_SINGLE_PLAYING:
+                        vTaskSuspend(MainMenuTask);
+                        vTaskSuspend(TetrisStatePausedTask);
+                        vTaskSuspend(GameOverScreenTask);
 
                         vTaskResume(TetrisStatePlayingTask);
+
                         vTaskResume(GenerateTetriminoPermutationsTask);
                         vTaskResume(SpawnTetriminoTask);
                         vTaskResume(MoveTetriminoOneDownTask);
@@ -184,10 +248,14 @@ state_handling:
                         vTaskResume(MoveTetriminoToTheLeftTask);
                         vTaskResume(RotateTetriminoCWTask);
                         vTaskResume(RotateTetriminoCCWTask);
+                        vTaskResume(ResetGameTask);
                         break;
 
-                    case STATE_PAUSED:
+                    case STATE_SINGLE_PAUSED:
+                        vTaskSuspend(MainMenuTask);
                         vTaskSuspend(TetrisStatePlayingTask);
+                        vTaskSuspend(GameOverScreenTask);
+
                         vTaskSuspend(GenerateTetriminoPermutationsTask);
                         vTaskSuspend(SpawnTetriminoTask);
                         vTaskSuspend(MoveTetriminoOneDownTask);
@@ -197,6 +265,24 @@ state_handling:
                         vTaskSuspend(RotateTetriminoCCWTask);
 
                         vTaskResume(TetrisStatePausedTask);
+                        vTaskResume(ResetGameTask);
+                        break;
+
+                    case STATE_GAME_OVER:
+                        vTaskSuspend(MainMenuTask);
+                        vTaskSuspend(TetrisStatePlayingTask);
+                        vTaskSuspend(TetrisStatePausedTask);
+
+                        vTaskSuspend(GenerateTetriminoPermutationsTask);
+                        vTaskSuspend(SpawnTetriminoTask);
+                        vTaskSuspend(MoveTetriminoOneDownTask);
+                        vTaskSuspend(MoveTetriminoToTheRightTask);
+                        vTaskSuspend(MoveTetriminoToTheLeftTask);
+                        vTaskSuspend(RotateTetriminoCWTask);
+                        vTaskSuspend(RotateTetriminoCCWTask);
+
+                        vTaskResume(GameOverScreenTask);
+                        vTaskResume(ResetGameTask);
                         break;
 
                     default:
@@ -236,6 +322,13 @@ int main(int argc, char *argv[])
 
     atexit(aIODeinit);
 
+    // Semaphores
+    current_state.lock = xSemaphoreCreateMutex();
+    if (!current_state.lock){
+        PRINT_ERROR("Could not create current state lock.");
+        goto err_current_state_lock;
+    }
+
     // Message sending
     StateMachineQueue = xQueueCreate(STATE_QUEUE_LENGTH, sizeof(unsigned char));
     if (!StateMachineQueue) {
@@ -244,7 +337,7 @@ int main(int argc, char *argv[])
     }
 
     // Tasks
-    if (xTaskCreate(vSequentialStateMachine, "SequentialStateMachine",
+    if (xTaskCreate(vStateMachine, "SequentialStateMachine",
                     mainGENERIC_STACK_SIZE * 2, NULL, configMAX_PRIORITIES - 1, 
                     &SequentialStateMachine) != pdPASS) {
         PRINT_TASK_ERROR("StateMachine");
@@ -257,7 +350,7 @@ int main(int argc, char *argv[])
         PRINT_TASK_ERROR("BufferSwapTask");
         goto err_bufferswap;
     }
-
+    
     tetrisInit();
 
     vTaskStartScheduler();
@@ -271,6 +364,9 @@ err_statemachine:
 
 err_state_queue:
     vQueueDelete(StateMachineQueue);
+
+err_current_state_lock:
+    vSemaphoreDelete(current_state.lock);
 
 err_init_audio:
     tumSoundExit();

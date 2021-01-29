@@ -44,18 +44,23 @@
 
 #define TETRIMINO_BAG_SIZE 7
 
+#define MAX_STARTING_LEVEL 19
+
+TaskHandle_t MainMenuTask = NULL;
 TaskHandle_t TetrisStatePlayingTask = NULL;
 TaskHandle_t TetrisStatePausedTask = NULL;
+TaskHandle_t GameOverScreenTask = NULL;
 
 TaskHandle_t GenerateTetriminoPermutationsTask = NULL;
 TaskHandle_t SpawnTetriminoTask = NULL;
 
 TaskHandle_t MoveTetriminoOneDownTask = NULL;
-
 TaskHandle_t MoveTetriminoToTheRightTask = NULL;
 TaskHandle_t MoveTetriminoToTheLeftTask = NULL;
 TaskHandle_t RotateTetriminoCWTask = NULL;
 TaskHandle_t RotateTetriminoCCWTask = NULL;
+
+TaskHandle_t ResetGameTask = NULL;
 
 static xTimerHandle LockingTetriminoTimer = NULL;
 
@@ -63,6 +68,15 @@ static QueueHandle_t TetriminoSelectionQueue = NULL;
 
 SemaphoreHandle_t ScreenLock = NULL;
 SemaphoreHandle_t DrawSignal = NULL;
+
+static SemaphoreHandle_t GenerateBagSignal = NULL;
+static SemaphoreHandle_t SpawnSignal = NULL;
+static SemaphoreHandle_t ResetGameSignal = NULL;
+
+static SemaphoreHandle_t MoveRightSignal = NULL;
+static SemaphoreHandle_t MoveLeftSignal = NULL;
+static SemaphoreHandle_t RotateCWSignal = NULL;
+static SemaphoreHandle_t RotateCCWSignal = NULL;
 
 
 
@@ -77,7 +91,7 @@ typedef struct tile {
     unsigned int color;
 } tile_t;
 
-typedef struct t_or_table_t{
+typedef struct t_or_table{
     int or_T[4][4][2];  // 4 configurations of 4 points (2 coordinates) that need to be colored
     int or_J[4][4][2];
     int or_Z[2][4][2];
@@ -95,7 +109,7 @@ typedef struct play_area {
     SemaphoreHandle_t lock;
 } play_area_t;
 
-typedef struct tetrimino_t {
+typedef struct tetrimino {
     char name;
     unsigned int color;
     unsigned int grid[5][5];
@@ -105,12 +119,27 @@ typedef struct tetrimino_t {
     SemaphoreHandle_t lock;
 } tetrimino_t;
 
+typedef struct stats{
+    int current_score;
+    int score_lookup_table[4];
+    int level;
+    int cleared_lines;
+    int advance_level_lookup[MAX_STARTING_LEVEL+1];
+    SemaphoreHandle_t lock;
+} stats_t;
+
+typedef struct drop_speed_table{
+    int drop_speeds[MAX_STARTING_LEVEL+1];
+    SemaphoreHandle_t lock;
+} drop_speed_table_t;
 
 
 buttons_buffer_t buttons = { 0 };
 t_or_table_t orientation_table = { 0 };
 play_area_t playfield = { 0 };
 tetrimino_t tetrimino = { 0 };
+stats_t statistics = { 0 };
+drop_speed_table_t drop_lookup = { 0 };
 
 // Two required function prototypes for the init functions
 void clearTetriminoGrid(tetrimino_t* t);
@@ -278,6 +307,41 @@ tetrimino_t initTetrimino(t_or_table_t* or, tetrimino_t* t, char name, unsigned 
     return *t;
 }
 
+stats_t initStatistics(stats_t* statistics){
+    statistics->current_score = 0;
+    statistics->cleared_lines = 0;
+    statistics->level = 0;
+
+    statistics->score_lookup_table[0] = 40;     // points for clearing one line at level zero
+    statistics->score_lookup_table[1] = 100;    // points for clearing two lines at level zero
+    statistics->score_lookup_table[2] = 300;    // points for clearing three lines at level zero
+    statistics->score_lookup_table[3] = 1200;   // points for clearing four lines at level zero --> a TETRIS
+
+    for (int i = 0; i <= MAX_STARTING_LEVEL; i++){
+        statistics->advance_level_lookup[i] = (i+1) * 10;   // ie for advancing from level 8 to 9 the player needs 
+                                                            // to clear 90 lines regardless of the starting level
+    }
+
+    return *statistics;
+}
+
+drop_speed_table_t initDropLookUpTable(drop_speed_table_t* d){
+    // Drop speed of a tetrimmino encoded as milliseconds per drop
+    // Taken from meatfighter.com/nintendotetrisai and changed to fit the 50Hz of the Emulator
+    d->drop_speeds[0] = 800; d->drop_speeds[1] = 717;
+    d->drop_speeds[2] = 633; d->drop_speeds[3] = 550;
+    d->drop_speeds[4] = 467; d->drop_speeds[5] = 383;
+    d->drop_speeds[6] = 300; d->drop_speeds[7] = 217;
+    d->drop_speeds[8] = 133; d->drop_speeds[9] = 100;
+
+    d->drop_speeds[10] = 83; d->drop_speeds[11] = 83;
+    d->drop_speeds[12] = 83; d->drop_speeds[13] = 67;
+    d->drop_speeds[14] = 67; d->drop_speeds[15] = 67;
+    d->drop_speeds[16] = 50; d->drop_speeds[17] = 50;
+    d->drop_speeds[18] = 50; d->drop_speeds[19] = 33;
+
+    return *d;
+}
 
 
 void drawTile(int pos_x, int pos_y, tile_t* colored_tile){
@@ -296,7 +360,7 @@ void printPlayArea(play_area_t* p){
     }
 }
 
-void drawPlayArea(play_area_t* area){
+void drawPlayArea(play_area_t* p){
     int drawing_position_x = 0;
     int drawing_position_y = 0;
 
@@ -304,7 +368,15 @@ void drawPlayArea(play_area_t* area){
         for(int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
             drawing_position_x = PLAY_AREA_POSITION_X + c*TILE_WIDTH;
             drawing_position_y = PLAY_AREA_POSITION_Y + r*TILE_HEIGHT;
-            drawTile(drawing_position_x, drawing_position_y, &(area->tiles[r][c]));
+            drawTile(drawing_position_x, drawing_position_y, &(p->tiles[r][c]));
+        }
+    }
+}
+
+void clearPlayArea(play_area_t* p){
+    for (int r = 0; r < PLAY_AREA_HEIGHT_IN_TILES; r++){
+        for (int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
+            p->tiles[r][c].color = 0;
         }
     }
 }
@@ -534,7 +606,7 @@ unsigned int chooseColorForTetrimino(char name){
     }   
 }
 
-void clearFullyColoredLines(play_area_t* playfield){
+int clearFullyColoredLines(play_area_t* playfield){
     int offset = 0;
     int flag = 0;
     printf("Call to line clearing function.\n");
@@ -567,8 +639,42 @@ void clearFullyColoredLines(play_area_t* playfield){
             }
         }
     }
+    return offset;
 }
 
+
+
+void drawStatistics(stats_t* statistics){
+    char score_text[10] = "SCORE";
+    int score_text_width = 0; tumGetTextSize((char *) score_text, &score_text_width, NULL);
+    char level_text[10] = "LEVEL";
+    int level_text_width = 0; tumGetTextSize((char *) level_text, &level_text_width, NULL);
+    char lines_text[10] = "LINES";
+    int lines_text_width = 0; tumGetTextSize((char *) lines_text, &lines_text_width, NULL);
+    
+    char score_buffer[10] = { 0 };
+    char level_buffer[10] = { 0 };
+    char lines_buffer[10] = { 0 };
+
+    sprintf(score_buffer, "%10i", statistics->current_score);
+    sprintf(level_buffer, "%10i", statistics->level);
+    sprintf(lines_buffer, "%10i", statistics->cleared_lines);
+
+    tumDrawText(score_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                20, White);
+    tumDrawText(score_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                35, White);
+
+    tumDrawText(level_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                80, White);
+    tumDrawText(level_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                95, White);
+
+    tumDrawText(lines_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                140, White);
+    tumDrawText(lines_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+20, 
+                155, White);
+}
 
 
 
@@ -580,53 +686,113 @@ void xGetButtonInput(void)
     }
 }
 
-void checkForButtonInput(void){
-
+void checkForGameInput(void){
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
 
-        // If P has been pressed pause/resume the game
-        if(buttons.buttons[KEYCODE(P)]){
-            buttons.buttons[KEYCODE(P)] = 0;
-            if (StateMachineQueue){
-                xQueueSend(StateMachineQueue, &next_state_signal, 0);
-            }
+        // if R has been pressed, reset the game
+        if (buttons.buttons[KEYCODE(R)]){
+            buttons.buttons[KEYCODE(R)] = 0;
+            xSemaphoreGive(ResetGameSignal);
             xSemaphoreGive(buttons.lock);
         }
 
         // if A has been pressed, call moveToLeft
         if(buttons.buttons[KEYCODE(A)]){
             buttons.buttons[KEYCODE(A)] = 0;
-            xTaskNotifyGive(MoveTetriminoToTheLeftTask);
+            xSemaphoreGive(MoveLeftSignal);
             xSemaphoreGive(buttons.lock);
         }
+
+        /*
         // if S has been pressed, call moveDown
         if (buttons.buttons[KEYCODE(S)]){
             buttons.buttons[KEYCODE(S)] = 0;
-            xTaskNotifyGive(MoveTetriminoOneDownTask);
+            // to be implemented
             xSemaphoreGive(buttons.lock);
-        }
+        } */
 
         // if D has been pressed, call moveToRight
         if (buttons.buttons[KEYCODE(D)]){
             buttons.buttons[KEYCODE(D)] = 0;
-            xTaskNotifyGive(MoveTetriminoToTheRightTask);
+            xSemaphoreGive(MoveRightSignal);
             xSemaphoreGive(buttons.lock);
         }
 
         // if Left has been pressed, call rotateLeft
         if (buttons.buttons[KEYCODE(LEFT)]){
             buttons.buttons[KEYCODE(LEFT)] = 0;
-            xTaskNotifyGive(RotateTetriminoCCWTask);
+            xSemaphoreGive(RotateCWSignal);
             xSemaphoreGive(buttons.lock);
         }
 
         // if Right has been pressed, call rotateRight
         if (buttons.buttons[KEYCODE(RIGHT)]){
             buttons.buttons[KEYCODE(RIGHT)] = 0;
-            xTaskNotifyGive(RotateTetriminoCWTask);
+            xSemaphoreGive(RotateCCWSignal);
             xSemaphoreGive(buttons.lock);
         }
 
+    }
+    xSemaphoreGive(buttons.lock);
+}
+
+void checkForFunctionalityInput(void){
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
+
+        // If P has been pressed pause/resume the game
+        if(buttons.buttons[KEYCODE(P)]){
+            buttons.buttons[KEYCODE(P)] = 0;  
+
+            if (StateMachineQueue){
+
+                if (current_state.lock){
+                    if (xSemaphoreTake(current_state.lock, 0) == pdTRUE){
+
+                        if (getCurrentState(&current_state) == single_playing_signal){
+                            xQueueSend(StateMachineQueue, &single_paused_signal, 0);
+                            xSemaphoreGive(current_state.lock);
+                        }
+                        if (getCurrentState(&current_state) == single_paused_signal){
+                            xQueueSend(StateMachineQueue, &single_playing_signal, 0);
+                            xSemaphoreGive(current_state.lock);
+                        }
+                    }
+                    xSemaphoreGive(current_state.lock);
+                }
+            }
+            xSemaphoreGive(buttons.lock);
+        }
+
+        // if E has been pressed, exit to main menu
+        if(buttons.buttons[KEYCODE(E)]){
+            buttons.buttons[KEYCODE(E)] = 0;  
+
+            if (StateMachineQueue){
+                xQueueSend(StateMachineQueue, &main_menu_signal, 0);
+            }
+            xSemaphoreGive(buttons.lock);
+        }
+
+        // if Enter has been pressed in the main menu, start playing
+        if(buttons.buttons[KEYCODE(RETURN)]){
+            buttons.buttons[KEYCODE(RETURN)] = 0;  
+        
+            if (StateMachineQueue){
+
+                if (current_state.lock){
+                    if (xSemaphoreTake(current_state.lock, 0) == pdTRUE){
+
+                        if (getCurrentState(&current_state) == main_menu_signal){
+                            xQueueSend(StateMachineQueue, &single_playing_signal, 0);
+                            xSemaphoreGive(current_state.lock);
+                        }
+                    }
+                    xSemaphoreGive(current_state.lock);
+                }
+            }
+            xSemaphoreGive(buttons.lock);
+        }        
+        
     }
     xSemaphoreGive(buttons.lock);
 }
@@ -639,23 +805,27 @@ void vCalculateBagOfTetriminos(void *pvParameters){
     int position = 0;
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        printf("Permutation request received.\n");
-        memcpy(names, tetriminos, 7); // set array again with names of tetriminos
+        if (GenerateBagSignal){
+            if (xSemaphoreTake(GenerateBagSignal, portMAX_DELAY) == pdTRUE){
 
-        for (int i = 0; i < TETRIMINO_BAG_SIZE; i++){
+                printf("Permutation request received.\n");
+                memcpy(names, tetriminos, 7); // set array again with names of tetriminos
+
+                for (int i = 0; i < TETRIMINO_BAG_SIZE; i++){
 
 random_number_again:
-            position = rand() % TETRIMINO_BAG_SIZE;
+                    position = rand() % TETRIMINO_BAG_SIZE;
 
-            if (names[position] != 0){
-                printf("Set position: %i\n", position);
-                xQueueSend(TetriminoSelectionQueue, &names[position], 0);
-                names[position] = 0;
-            }
-            else{
-                // position was already pushed into queue
-                goto random_number_again;
+                    if (names[position] != 0){
+                        printf("Set position: %i\n", position);
+                        xQueueSend(TetriminoSelectionQueue, &names[position], 0);
+                        names[position] = 0;
+                    }
+                    else{
+                        // position was already pushed into queue
+                        goto random_number_again;
+                    }
+                }
             }
         }
     }
@@ -664,42 +834,60 @@ random_number_again:
 void vSpawnTetrimino(void *pvParameters){
     char name_buffer = 0;
     unsigned int color = 0;
-
-    xTaskNotifyGive(GenerateTetriminoPermutationsTask);
+    int flag = 0;
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (SpawnSignal){
+            if (xSemaphoreTake(SpawnSignal, portMAX_DELAY) == pdTRUE){
 
-        if (uxQueueMessagesWaiting(TetriminoSelectionQueue) == 0){
-            xTaskNotifyGive(GenerateTetriminoPermutationsTask);  // Send signal to generate a new permutation
-        }
-        xQueueReceive(TetriminoSelectionQueue, &name_buffer, 0);
+                printf("Spawn request received.\n");
 
-        color = chooseColorForTetrimino(name_buffer);
-
-        if(tetrimino.lock){
-            if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){   
-                
-                if(orientation_table.lock){
-                    if(xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
-                        tetrimino = initTetrimino(&orientation_table, &tetrimino, name_buffer, color); 
-                        xSemaphoreGive(orientation_table.lock);
-                    }
-                    xSemaphoreGive(orientation_table.lock);
+                if (uxQueueMessagesWaiting(TetriminoSelectionQueue) == 0){
+                    xSemaphoreGive(GenerateBagSignal);  // Send signal to generate a new permutation
                 }
+                xQueueReceive(TetriminoSelectionQueue, &name_buffer, 0);
 
-                setPositionOfTetriminoViaCenter(&tetrimino, SPAWN_ROW, SPAWN_COLUMN);
+                color = chooseColorForTetrimino(name_buffer);
 
-                if (playfield.lock) {
-                    if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
-                        transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-                        xSemaphoreGive(playfield.lock);
-                        xSemaphoreGive(tetrimino.lock);
+                if(tetrimino.lock){
+                    if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){   
+                        
+                        if(orientation_table.lock){
+                            if(xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
+                                tetrimino = initTetrimino(&orientation_table, &tetrimino, name_buffer, color); 
+                                xSemaphoreGive(orientation_table.lock);
+                            }
+                            xSemaphoreGive(orientation_table.lock);
+                        }
+
+                        if (playfield.lock) {
+                            if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+
+                                setPositionOfTetriminoViaCenter(&tetrimino, SPAWN_ROW, SPAWN_COLUMN);
+                                flag = checkTetriminoPosition(&playfield, &tetrimino);
+                                printf("Flag: %i\n", flag);
+                                // in case position spawn position is valid
+                                if (flag != -1){
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+                                }
+
+                                xSemaphoreGive(playfield.lock);
+                                xSemaphoreGive(tetrimino.lock);
+
+                                // if position is invalid, then the game is over 
+                                if(flag == -1){
+                                    if (StateMachineQueue){
+                                        xQueueSend(StateMachineQueue, &game_over_signal, 0);
+                                    }
+                                }
+                                flag = 0;
+                            }
+                            xSemaphoreGive(playfield.lock);
+                        }
                     }
-                    xSemaphoreGive(playfield.lock);
+                    xSemaphoreGive(tetrimino.lock);
                 }
             }
-            xSemaphoreGive(tetrimino.lock);
         }
     }
 }
@@ -709,52 +897,66 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
     int backup_row = 0;
     int backup_column = 0;
     int flag = 0;
-
-    TickType_t last_change = xTaskGetTickCount();
+    int drop_delay = 0;
 
     while(1){
-        // Hier muss noch ein Zeitgeber rein, in welchem Intervall das Tetrimino eins runterfallen soll
-        /*
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (statistics.lock){
+            if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
 
-        if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
-            last_change = xTaskGetTickCount();
-            */
-            if (tetrimino.lock){
-                if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+                if (drop_lookup.lock){
+                    if (xSemaphoreTake(drop_lookup.lock, 0) == pdTRUE){
 
-                    if (playfield.lock) {
-                        if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                        if (statistics.level <= MAX_STARTING_LEVEL){
+                            drop_delay = drop_lookup.drop_speeds[statistics.level]; // get drop delay for current level
+                        }
+                        else{
+                            drop_delay = drop_lookup.drop_speeds[MAX_STARTING_LEVEL];
+                        }
+                        xSemaphoreGive(drop_lookup.lock);
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(drop_lookup.lock);
+                }
+            }
+            xSemaphoreGive(statistics.lock);
+        }
+        printf("Drop delay: %i\n", drop_delay);
 
-                            backup_row = tetrimino.playfield_row;
-                            backup_column = tetrimino.playfield_column;
 
-                            removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
-                            setPositionOfTetriminoViaCenter(&tetrimino, backup_row+1, backup_column);
-                            flag = checkTetriminoPosition(&playfield, &tetrimino);
-                            
-                            if (flag == -1){    // error when trying to move down --> tetrimino was supported in the previous position 
-                                setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
-                            }
-                            transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+        if (tetrimino.lock){
+            if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
 
-                            xSemaphoreGive(playfield.lock);
-                            xSemaphoreGive(tetrimino.lock);
+                if (playfield.lock) {
+                    if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
 
-                            if (flag == 1){
-                                printf("Activate Timer.\n");
+                        backup_row = tetrimino.playfield_row;
+                        backup_column = tetrimino.playfield_column;
+
+                        removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+                        setPositionOfTetriminoViaCenter(&tetrimino, backup_row+1, backup_column);
+                        flag = checkTetriminoPosition(&playfield, &tetrimino);
+                        
+                        if (flag == -1){  
+                            setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
+                            printf("Activate Timer.\n");    // if tetrimino was supported in previous position activate timer once
+                            if (xTimerIsTimerActive(LockingTetriminoTimer) == pdFALSE){
                                 xTimerReset(LockingTetriminoTimer, 0);
                             }
-
-                            backup_row = 0; backup_column = 0;
                         }
+                        transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+
                         xSemaphoreGive(playfield.lock);
+                        xSemaphoreGive(tetrimino.lock);
+
+                        backup_row = 0; backup_column = 0;
                     }
+                    xSemaphoreGive(playfield.lock);
                 }
-                xSemaphoreGive(tetrimino.lock);
             }
-            vTaskDelayUntil(&last_change, 500);
-        // }
+            xSemaphoreGive(tetrimino.lock);
+        }
+        
+        vTaskDelay(drop_delay);
     }
 }
 
@@ -765,44 +967,47 @@ void vMoveTetriminoToTheRight(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if(MoveRightSignal){
+            if (xSemaphoreTake(MoveRightSignal, portMAX_DELAY) == pdTRUE){
 
-        if (xTaskGetTickCount()-last_change > BUTTON_DEBOUNCE_DELAY){
-            last_change = xTaskGetTickCount();
+                if (xTaskGetTickCount()-last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
 
-            if (tetrimino.lock){
-                if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+                    if (tetrimino.lock){
+                        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
 
-                    if (playfield.lock) {
-                        if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                            if (playfield.lock) {
+                                if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
 
-                            backup_row = tetrimino.playfield_row;
-                            backup_column = tetrimino.playfield_column;
+                                    backup_row = tetrimino.playfield_row;
+                                    backup_column = tetrimino.playfield_column;
 
-                            removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
-                            setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column+1);
-                            flag = checkTetriminoPosition(&playfield, &tetrimino);
+                                    removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+                                    setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column+1);
+                                    flag = checkTetriminoPosition(&playfield, &tetrimino);
 
-                            if (flag == -1){
-                                setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
+                                    if (flag == -1){
+                                        setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
+                                    }
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+
+                                    xSemaphoreGive(playfield.lock);
+                                    xSemaphoreGive(tetrimino.lock);
+
+                                    if (flag == 1){
+                                        xTimerReset(LockingTetriminoTimer, 0);
+                                    }
+                                    
+                                    backup_row = 0;
+                                    backup_column = 0;
+
+                                }
+                                xSemaphoreGive(playfield.lock);
                             }
-                            transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-
-                            xSemaphoreGive(playfield.lock);
-                            xSemaphoreGive(tetrimino.lock);
-
-                            if (flag == 1){
-                                xTimerReset(LockingTetriminoTimer, 0);
-                            }
-                            
-                            backup_row = 0;
-                            backup_column = 0;
-
                         }
-                        xSemaphoreGive(playfield.lock);
+                        xSemaphoreGive(tetrimino.lock);
                     }
                 }
-                xSemaphoreGive(tetrimino.lock);
             }
         }
     }
@@ -815,49 +1020,51 @@ void vMoveTetriminoToTheLeft(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (xTaskGetTickCount()-last_change > BUTTON_DEBOUNCE_DELAY){
-            last_change = xTaskGetTickCount();
+        if (MoveLeftSignal){
+            if (xSemaphoreTake(MoveLeftSignal, portMAX_DELAY) == pdTRUE) {
+        
+                if (xTaskGetTickCount()-last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
 
-            if (tetrimino.lock){
-                if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+                    if (tetrimino.lock){
+                        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
 
-                    if (playfield.lock) {
-                        if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                            if (playfield.lock) {
+                                if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
 
-                            backup_row = tetrimino.playfield_row;
-                            backup_column = tetrimino.playfield_column;
+                                    backup_row = tetrimino.playfield_row;
+                                    backup_column = tetrimino.playfield_column;
 
-                            removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
-                            setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column-1);
-                            flag = checkTetriminoPosition(&playfield, &tetrimino);
+                                    removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+                                    setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column-1);
+                                    flag = checkTetriminoPosition(&playfield, &tetrimino);
 
-                           if (flag == -1){
-                                setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
+                                if (flag == -1){
+                                        setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
+                                    }
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+
+                                    xSemaphoreGive(playfield.lock);
+                                    xSemaphoreGive(tetrimino.lock);
+
+                                    if (flag == 1){
+                                        xTimerReset(LockingTetriminoTimer, 0);
+                                    }
+
+                                    backup_row = 0;
+                                    backup_column = 0;
+                                }
+                                xSemaphoreGive(playfield.lock);
                             }
-                            transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-
-                            xSemaphoreGive(playfield.lock);
-                            xSemaphoreGive(tetrimino.lock);
-
-                            if (flag == 1){
-                                xTimerReset(LockingTetriminoTimer, 0);
-                            }
-
-                            backup_row = 0;
-                            backup_column = 0;
                         }
-                        xSemaphoreGive(playfield.lock);
+                        xSemaphoreGive(tetrimino.lock);
                     }
                 }
-                xSemaphoreGive(tetrimino.lock);
             }
         }
     } 
 }
-
-void makeTetriminoFallDownFast(void *pvParameters); // not ready yet, to be implemented!
 
 void vRotateTetriminoCW(void *pvParameters){
     int backup_orientation = 0;
@@ -866,50 +1073,54 @@ void vRotateTetriminoCW(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
-            last_change = xTaskGetTickCount();
+        if (RotateCWSignal){
+            if (xSemaphoreTake(RotateCWSignal, portMAX_DELAY) == pdTRUE){
+        
+                if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
 
-            if (tetrimino.lock){
-                if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+                    if (tetrimino.lock){
+                        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
 
-                    if (playfield.lock) {
-                        if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
-                            
-                            backup_orientation = tetrimino.orientation;
+                            if (playfield.lock) {
+                                if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                                    
+                                    backup_orientation = tetrimino.orientation;
 
-                            removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
-                            
-                            if (orientation_table.lock){
-                                if (xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
-                                    setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation-1);
-                                    setPositionOfTetriminoViaCenter(&tetrimino, tetrimino.playfield_row, tetrimino.playfield_column);
-                                    flag = checkTetriminoPosition(&playfield, &tetrimino);
+                                    removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+                                    
+                                    if (orientation_table.lock){
+                                        if (xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
+                                            setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation-1);
+                                            setPositionOfTetriminoViaCenter(&tetrimino, tetrimino.playfield_row, tetrimino.playfield_column);
+                                            flag = checkTetriminoPosition(&playfield, &tetrimino);
 
-                                    if (flag == -1) {
-                                        setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation);
+                                            if (flag == -1) {
+                                                setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation);
+                                            }
+                                        }
+                                        xSemaphoreGive(orientation_table.lock);
                                     }
+
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+
+                                    xSemaphoreGive(playfield.lock);
+                                    xSemaphoreGive(tetrimino.lock);
+
+                                    if (flag == 1){
+                                        xTimerReset(LockingTetriminoTimer, 0);
+                                    }
+
+                                    backup_orientation = 0;
                                 }
-                                xSemaphoreGive(orientation_table.lock);
+                                xSemaphoreGive(playfield.lock);
                             }
-
-                            transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-
-                            xSemaphoreGive(playfield.lock);
-                            xSemaphoreGive(tetrimino.lock);
-
-                            if (flag == 1){
-                                xTimerReset(LockingTetriminoTimer, 0);
-                            }
-
-                            backup_orientation = 0;
                         }
-                        xSemaphoreGive(playfield.lock);
-                    }
+                        xSemaphoreGive(tetrimino.lock);
+                    }            
                 }
-                xSemaphoreGive(tetrimino.lock);
-            }            
+            }
         }
     }
 }
@@ -920,49 +1131,54 @@ void vRotateTetriminoCCW(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
     while(1){
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
-            last_change = xTaskGetTickCount();
 
-            if (tetrimino.lock){
-                if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
+        if (RotateCCWSignal){
+            if (xSemaphoreTake(RotateCCWSignal, portMAX_DELAY) == pdTRUE){
 
-                    if (playfield.lock) {
-                        if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
 
-                            backup_orientation = tetrimino.orientation;
+                    if (tetrimino.lock){
+                        if (xSemaphoreTake(tetrimino.lock, 0) == pdTRUE){
 
-                            removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+                            if (playfield.lock) {
+                                if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
 
-                            if (orientation_table.lock){
-                                if (xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
-                                    setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation-1);
-                                    setPositionOfTetriminoViaCenter(&tetrimino, tetrimino.playfield_row, tetrimino.playfield_column);
-                                    flag = checkTetriminoPosition(&playfield, &tetrimino);
+                                    backup_orientation = tetrimino.orientation;
 
-                                    if (flag == -1) {
-                                        setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation);
+                                    removeTetriminoColorsFromCurrentPosition(&playfield, &tetrimino);
+
+                                    if (orientation_table.lock){
+                                        if (xSemaphoreTake(orientation_table.lock, 0) == pdTRUE){
+                                            setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation-1);
+                                            setPositionOfTetriminoViaCenter(&tetrimino, tetrimino.playfield_row, tetrimino.playfield_column);
+                                            flag = checkTetriminoPosition(&playfield, &tetrimino);
+
+                                            if (flag == -1) {
+                                                setTetriminoGridViaOrientation(&orientation_table, &tetrimino, backup_orientation);
+                                            }
+                                        }
+                                        xSemaphoreGive(orientation_table.lock);
                                     }
+
+                                    transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
+
+                                    xSemaphoreGive(playfield.lock);
+                                    xSemaphoreGive(tetrimino.lock);
+
+                                    if (flag == 1){
+                                        xTimerReset(LockingTetriminoTimer, 0);
+                                    }
+
+                                    backup_orientation = 0;
                                 }
-                                xSemaphoreGive(orientation_table.lock);
+                                xSemaphoreGive(playfield.lock);
                             }
-
-                            transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-
-                            xSemaphoreGive(playfield.lock);
-                            xSemaphoreGive(tetrimino.lock);
-
-                            if (flag == 1){
-                                xTimerReset(LockingTetriminoTimer, 0);
-                            }
-
-                            backup_orientation = 0;
                         }
-                        xSemaphoreGive(playfield.lock);
-                    }
+                        xSemaphoreGive(tetrimino.lock);
+                    }            
                 }
-                xSemaphoreGive(tetrimino.lock);
-            }            
+            }
         }
     }
 }
@@ -973,7 +1189,76 @@ void vLockingTetriminoIntoPlace(void *pvParameters){
     xTimerStop(LockingTetriminoTimer, 0);
 }
 
+void vResetGame(void *pvParameters){
 
+    TickType_t last_change = xTaskGetTickCount();
+
+    while(1){
+        if (ResetGameSignal){
+            if (xSemaphoreTake(ResetGameSignal, portMAX_DELAY) == pdTRUE){
+
+                if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
+
+                    printf("Reset game.\n");
+
+                    // Reset gamefield
+                    if (playfield.lock){
+                        if (xSemaphoreTake(playfield.lock, portMAX_DELAY) == pdTRUE){
+                            clearPlayArea(&playfield);
+                        }
+                        xSemaphoreGive(playfield.lock);
+                    }
+                    xSemaphoreGive(playfield.lock);
+
+                    // Reset statistics
+                    if (statistics.lock){
+                        if (xSemaphoreTake(statistics.lock, portMAX_DELAY) == pdTRUE){
+                            statistics.cleared_lines = 0;
+                            statistics.current_score = 0;
+                            statistics.level = 0;   // to be worked on once the level choice in the main menu is ready
+                        }
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
+
+                    // Spawn new tetrimino
+                    xSemaphoreGive(GenerateBagSignal);
+                    xSemaphoreGive(SpawnSignal);
+
+                }
+            }
+        }
+    }
+}
+
+
+void vMainMenu(void *pvParameters){
+    char text[50] = "Tetris - Main Menu";
+    int text_width = 0;
+    tumGetTextSize((char *) text, &text_width, NULL);
+
+    while(1){
+        if (DrawSignal){
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
+
+                xGetButtonInput();
+                checkForFunctionalityInput();
+
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
+
+                tumDrawClear(Gray);
+                tumDrawFilledBox(PLAY_AREA_POSITION_X, PLAY_AREA_POSITION_Y, PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH, 
+                            PLAY_AREA_HEIGHT_IN_TILES*TILE_HEIGHT, Black);
+
+                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, 20, TUMBlue);
+
+                vDrawFPS();
+                xSemaphoreGive(ScreenLock);
+            }
+        }
+    }
+}
 
 void vTetrisStatePlaying(void *pvParameters){
 
@@ -981,17 +1266,18 @@ void vTetrisStatePlaying(void *pvParameters){
     int text_width = 0;
     tumGetTextSize((char *) text, &text_width, NULL);
 
-    orientation_table = initOrientationTable(&orientation_table);
-    playfield = initPlayArea(&playfield);
+    int lines_to_clear = 0;
 
-    xTaskNotifyGive(SpawnTetriminoTask);
+    xSemaphoreGive(SpawnSignal);
+    printf("Initial spawn request.\n");
 
     while(1){
         if (DrawSignal){
             if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
 
                 xGetButtonInput();
-                checkForButtonInput();
+                checkForGameInput();
+                checkForFunctionalityInput();
 
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
@@ -1006,11 +1292,11 @@ void vTetrisStatePlaying(void *pvParameters){
                             if (playfield.lock){
                                 if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
                                     transferTetriminoColorsToPlayArea(&playfield, &tetrimino);
-                                    clearFullyColoredLines(&playfield);
+                                    lines_to_clear = clearFullyColoredLines(&playfield);
                                     xSemaphoreGive(playfield.lock);
                                     xSemaphoreGive(tetrimino.lock);
-
-                                    xTaskNotifyGive(SpawnTetriminoTask);
+                                    printf("Spawn request.\n");
+                                    xSemaphoreGive(SpawnSignal);
                                     xTimerStop(LockingTetriminoTimer, 0);
                                 }
                             }
@@ -1019,14 +1305,38 @@ void vTetrisStatePlaying(void *pvParameters){
                     }
                     xSemaphoreGive(tetrimino.lock);
 
+                    if (lines_to_clear > 0){
+                        if (statistics.lock){
+                            if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                                statistics.cleared_lines += lines_to_clear;
+                                statistics.current_score += statistics.score_lookup_table[lines_to_clear-1] * (statistics.level+1);
+                                
+                                // Check if the level needs to be incremented
+                                if (statistics.cleared_lines >= statistics.advance_level_lookup[statistics.level]){
+                                    statistics.level++;
+                                    xSemaphoreGive(statistics.lock);
+                                }
+                            }
+                            xSemaphoreGive(statistics.lock);
+                        }
+                    }
+
                 }
 
                 if (playfield.lock){
-                    if (xSemaphoreTake(playfield.lock, portMAX_DELAY) == pdTRUE){
+                    if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
                         drawPlayArea(&playfield);
                         xSemaphoreGive(playfield.lock);
                     }
                     xSemaphoreGive(playfield.lock);
+                }
+
+                if (statistics.lock){
+                    if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                        drawStatistics(&statistics);
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
                 }
 
                 tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Lime);
@@ -1049,11 +1359,28 @@ void vTetrisStatePaused(void *pvParameters){
             if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
 
                 xGetButtonInput();
-                checkForButtonInput();
+                checkForGameInput();
+                checkForFunctionalityInput();
 
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
-                tumDrawClear(White);
+                tumDrawClear(Gray);
+
+                if (playfield.lock){
+                    if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
+                        drawPlayArea(&playfield);
+                        xSemaphoreGive(playfield.lock);
+                    }
+                    xSemaphoreGive(playfield.lock);
+                }
+
+                if (statistics.lock){
+                    if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                        drawStatistics(&statistics);
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
+                }
 
                 tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Orange);
 
@@ -1064,6 +1391,40 @@ void vTetrisStatePaused(void *pvParameters){
     }
 }
 
+void vGameOverScreen(void *pvParameters){
+    char text[50] = "Game over!";
+    int text_width = 0;
+    tumGetTextSize((char *) text, &text_width, NULL);
+
+    while(1){
+        if (DrawSignal){
+            if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
+
+                xGetButtonInput();
+                checkForFunctionalityInput();
+
+                xSemaphoreTake(ScreenLock, portMAX_DELAY);
+
+                tumDrawClear(Gray);
+                tumDrawFilledBox(PLAY_AREA_POSITION_X, PLAY_AREA_POSITION_Y, PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH, 
+                            PLAY_AREA_HEIGHT_IN_TILES*TILE_HEIGHT, Black);
+
+                if (statistics.lock){
+                    if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                        drawStatistics(&statistics);
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
+                }
+
+                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT/2, Orange);
+
+                vDrawFPS();
+                xSemaphoreGive(ScreenLock);
+            }
+        }
+    }
+}
 
 
 int tetrisInit(void){
@@ -1104,6 +1465,60 @@ int tetrisInit(void){
         goto err_orientation_table_lock;
     }
 
+    statistics.lock = xSemaphoreCreateMutex();
+    if (!statistics.lock){
+        PRINT_ERROR("Failed to create statistics lock.");
+        goto err_statistics_lock;
+    }
+
+    drop_lookup.lock = xSemaphoreCreateMutex();
+    if (!drop_lookup.lock){
+        PRINT_ERROR("Faield to create drop lookup lock.");
+        goto err_drop_lookup_lock;
+    }
+
+    GenerateBagSignal = xSemaphoreCreateBinary();
+    if (!GenerateBagSignal){
+        PRINT_ERROR("Failed to create generate bag signal.");
+        goto err_generate_bag_signal;
+    }
+
+    SpawnSignal = xSemaphoreCreateBinary();
+    if (!SpawnSignal){
+        PRINT_ERROR("Failed to create spawn signal.");
+        goto err_spawn_signal;
+    }
+
+    MoveRightSignal = xSemaphoreCreateBinary();
+    if (!MoveRightSignal){
+        PRINT_ERROR("Failed to move right signal.");
+        goto err_move_right_signal;
+    }
+
+    MoveLeftSignal = xSemaphoreCreateBinary();
+    if (!MoveLeftSignal){
+        PRINT_ERROR("Failed to move left signal.");
+        goto err_move_left_signal;
+    }
+
+    RotateCWSignal = xSemaphoreCreateBinary();
+    if (!RotateCWSignal){
+        PRINT_ERROR("Failed to create rotate clockwise signal.");
+        goto err_rotate_clockwise_signal;
+    }
+
+    RotateCCWSignal = xSemaphoreCreateBinary();
+    if (!RotateCCWSignal){
+        PRINT_ERROR("Failed to create rotate counterclockwise signal.");
+        goto err_rotate_counterclockwise_signal;
+    }
+
+    ResetGameSignal = xSemaphoreCreateBinary();
+    if (!ResetGameSignal){
+        PRINT_ERROR("Failed to create reset game signal.");
+        goto err_reset_game_signal;
+    }
+
     // Message sending
     TetriminoSelectionQueue = xQueueCreate(TETRIMINO_BAG_SIZE, sizeof(char));
     if (!TetriminoSelectionQueue){
@@ -1119,6 +1534,13 @@ int tetrisInit(void){
     }
 
     // Tasks
+    if (xTaskCreate(vMainMenu, "MainMenuTask",
+                    mainGENERIC_STACK_SIZE * 2, NULL, configMAX_PRIORITIES-2, 
+                    &MainMenuTask) != pdPASS) {
+        PRINT_TASK_ERROR("MainMenuTask");
+        goto err_main_menu_task;
+    } 
+
     if (xTaskCreate(vTetrisStatePlaying, "TetrisStatePlayingTask",
                     mainGENERIC_STACK_SIZE * 2, NULL, configMAX_PRIORITIES-2, 
                     &TetrisStatePlayingTask) != pdPASS) {
@@ -1131,6 +1553,13 @@ int tetrisInit(void){
                     &TetrisStatePausedTask) != pdPASS) {
         PRINT_TASK_ERROR("TetrisStatePausedTask");
         goto err_tetris_state_paused_task;
+    } 
+
+    if (xTaskCreate(vGameOverScreen, "GameOverScreenTask",
+                    mainGENERIC_STACK_SIZE * 2, NULL, configMAX_PRIORITIES-2, 
+                    &GameOverScreenTask) != pdPASS) {
+        PRINT_TASK_ERROR("GameOverScreenTask");
+        goto err_game_over_screen_task;
     } 
 
     if (xTaskCreate(vCalculateBagOfTetriminos, "GenerateTetriminoPermutationsTask",
@@ -1180,10 +1609,19 @@ int tetrisInit(void){
                     &RotateTetriminoCCWTask) != pdPASS) {
         PRINT_TASK_ERROR("RotateTetriminoCCWTask");
         goto err_rotate_tetrimino_counterclockwise;
+    }
+
+    if (xTaskCreate(vResetGame, "ResetGameTask", 
+                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+2, 
+                    &ResetGameTask) != pdPASS) {
+        PRINT_TASK_ERROR("ResetGameTask");
+        goto err_reset_game_task;
     }      
 
+    vTaskSuspend(MainMenuTask);
     vTaskSuspend(TetrisStatePlayingTask);
     vTaskSuspend(TetrisStatePausedTask);
+    vTaskSuspend(GameOverScreenTask);
 
     vTaskSuspend(GenerateTetriminoPermutationsTask);
     vTaskSuspend(SpawnTetriminoTask);
@@ -1192,15 +1630,19 @@ int tetrisInit(void){
     vTaskSuspend(MoveTetriminoToTheLeftTask);
     vTaskSuspend(RotateTetriminoCWTask);
     vTaskSuspend(RotateTetriminoCCWTask);
+    vTaskSuspend(ResetGameTask);
+
+    orientation_table = initOrientationTable(&orientation_table);
+    playfield = initPlayArea(&playfield);
+    statistics = initStatistics(&statistics);
+    drop_lookup = initDropLookUpTable(&drop_lookup);
 
     srand(time(NULL));
 
     return 0;
 
-err_tetris_state_playing_task:
-    vTaskDelete(TetrisStatePlayingTask);
-err_tetris_state_paused_task:
-    vTaskDelete(TetrisStatePausedTask);
+err_reset_game_task:
+    vTaskDelete(ResetGameTask);
 err_rotate_tetrimino_counterclockwise:
     vTaskDelete(RotateTetriminoCCWTask);
 err_rotate_tetrimino_clockwise:
@@ -1215,6 +1657,14 @@ err_spawn_tetrimino_task:
     vTaskDelete(SpawnTetriminoTask);
 err_generate_permutations_task:
     vTaskDelete(GenerateTetriminoPermutationsTask);
+err_game_over_screen_task:
+    vTaskDelete(GameOverScreenTask);
+err_tetris_state_paused_task:
+    vTaskDelete(TetrisStatePausedTask);
+err_tetris_state_playing_task:
+    vTaskDelete(TetrisStatePlayingTask);
+err_main_menu_task:
+    vTaskDelete(MainMenuTask);
 
 err_locking_timer:  
     xTimerDelete(LockingTetriminoTimer, 0);
@@ -1222,6 +1672,25 @@ err_locking_timer:
 err_selection_queue:
     vQueueDelete(TetriminoSelectionQueue);
 
+err_reset_game_signal:
+    vSemaphoreDelete(ResetGameSignal);
+err_rotate_counterclockwise_signal:
+    vSemaphoreDelete(RotateCCWSignal);
+err_rotate_clockwise_signal:
+    vSemaphoreDelete(RotateCWSignal);
+err_move_left_signal:
+    vSemaphoreDelete(MoveLeftSignal);
+err_move_right_signal:
+    vSemaphoreDelete(MoveRightSignal);
+err_spawn_signal:
+    vSemaphoreDelete(SpawnSignal);
+err_generate_bag_signal:
+    vSemaphoreDelete(GenerateBagSignal);
+
+err_drop_lookup_lock:
+    vSemaphoreDelete(drop_lookup.lock);
+err_statistics_lock:
+    vSemaphoreDelete(statistics.lock);
 err_orientation_table_lock:
     vSemaphoreDelete(orientation_table.lock);
 err_tetrimino_lock:
