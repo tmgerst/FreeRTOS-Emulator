@@ -232,12 +232,17 @@ state_handling:
                         vTaskSuspend(ResetGameTask);
 
                         vTaskResume(MainMenuTask);
+                        vTaskResume(ChangeLevelTask);
+                        vTaskResume(ChangePlayModeTask);
                         break;                        
 
                     case STATE_SINGLE_PLAYING:
                         vTaskSuspend(MainMenuTask);
                         vTaskSuspend(TetrisStatePausedTask);
                         vTaskSuspend(GameOverScreenTask);
+
+                        vTaskSuspend(ChangeLevelTask);
+                        vTaskSuspend(ChangePlayModeTask);
 
                         vTaskResume(TetrisStatePlayingTask);
 
@@ -264,6 +269,9 @@ state_handling:
                         vTaskSuspend(RotateTetriminoCWTask);
                         vTaskSuspend(RotateTetriminoCCWTask);
 
+                        vTaskSuspend(ChangeLevelTask);
+                        vTaskSuspend(ChangePlayModeTask);
+
                         vTaskResume(TetrisStatePausedTask);
                         vTaskResume(ResetGameTask);
                         break;
@@ -280,6 +288,9 @@ state_handling:
                         vTaskSuspend(MoveTetriminoToTheLeftTask);
                         vTaskSuspend(RotateTetriminoCWTask);
                         vTaskSuspend(RotateTetriminoCCWTask);
+
+                        vTaskSuspend(ChangeLevelTask);
+                        vTaskSuspend(ChangePlayModeTask);
 
                         vTaskResume(GameOverScreenTask);
                         vTaskResume(ResetGameTask);

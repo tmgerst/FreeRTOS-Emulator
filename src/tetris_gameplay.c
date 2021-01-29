@@ -23,6 +23,21 @@
 #include "queue.h"
 
 #define BUTTON_DEBOUNCE_DELAY 100
+#define LEVEL_SELECTION_QUEUE_SIZE 1
+
+#define HEADLINE_POSITION 20
+
+#define CHOICE_PLAY_MODE_TEXT_POSITION_Y 80
+#define PLAY_MODE_BUTTONS_OFFSET_X 170
+#define PLAY_MODE_BUTTONS_POSITION_Y 110
+#define PLAY_MODE_BUTTONS_WIDTH 150
+#define PLAY_MODE_BUTTONS_HEIGHT 30
+#define PLAY_MODES_TEXT_OFFSET_X 10
+
+#define LEVEL_SELECTION_TEXT_POSITION_Y 170
+#define LEVEL_SELECTION_BOX_POSITION_Y 200
+#define LEVEL_SELECTION_BOX_WIDTH 80
+#define LEVEL_SELECTION_BOX_HEIGHT 30
 
 // gameplay relevant constants
 #define TILE_WIDTH 20
@@ -61,10 +76,13 @@ TaskHandle_t RotateTetriminoCWTask = NULL;
 TaskHandle_t RotateTetriminoCCWTask = NULL;
 
 TaskHandle_t ResetGameTask = NULL;
+TaskHandle_t ChangeLevelTask = NULL;
+TaskHandle_t ChangePlayModeTask = NULL;
 
 static xTimerHandle LockingTetriminoTimer = NULL;
 
 static QueueHandle_t TetriminoSelectionQueue = NULL;
+static QueueHandle_t LevelChangingQueue = NULL;
 
 SemaphoreHandle_t ScreenLock = NULL;
 SemaphoreHandle_t DrawSignal = NULL;
@@ -72,12 +90,15 @@ SemaphoreHandle_t DrawSignal = NULL;
 static SemaphoreHandle_t GenerateBagSignal = NULL;
 static SemaphoreHandle_t SpawnSignal = NULL;
 static SemaphoreHandle_t ResetGameSignal = NULL;
+static SemaphoreHandle_t ChangePlayModeSignal = NULL;
 
 static SemaphoreHandle_t MoveRightSignal = NULL;
 static SemaphoreHandle_t MoveLeftSignal = NULL;
 static SemaphoreHandle_t RotateCWSignal = NULL;
 static SemaphoreHandle_t RotateCCWSignal = NULL;
 
+const int increment_level = 1;
+const int decrement_level = -1;
 
 
 typedef struct buttons_buffer {
@@ -133,6 +154,11 @@ typedef struct drop_speed_table{
     SemaphoreHandle_t lock;
 } drop_speed_table_t;
 
+typedef struct play_mode {
+    unsigned char mode;
+    SemaphoreHandle_t lock;
+} play_mode_t;
+
 
 buttons_buffer_t buttons = { 0 };
 t_or_table_t orientation_table = { 0 };
@@ -140,6 +166,7 @@ play_area_t playfield = { 0 };
 tetrimino_t tetrimino = { 0 };
 stats_t statistics = { 0 };
 drop_speed_table_t drop_lookup = { 0 };
+play_mode_t play_mode = { 0 };
 
 // Two required function prototypes for the init functions
 void clearTetriminoGrid(tetrimino_t* t);
@@ -327,7 +354,7 @@ stats_t initStatistics(stats_t* statistics){
 
 drop_speed_table_t initDropLookUpTable(drop_speed_table_t* d){
     // Drop speed of a tetrimmino encoded as milliseconds per drop
-    // Taken from meatfighter.com/nintendotetrisai and changed to fit the 50Hz of the Emulator
+    // Taken from meatfighter.com/nintendotetrisai and slightly changed to fit the 50Hz of the Emulator
     d->drop_speeds[0] = 800; d->drop_speeds[1] = 717;
     d->drop_speeds[2] = 633; d->drop_speeds[3] = 550;
     d->drop_speeds[4] = 467; d->drop_speeds[5] = 383;
@@ -342,6 +369,12 @@ drop_speed_table_t initDropLookUpTable(drop_speed_table_t* d){
 
     return *d;
 }
+
+play_mode_t initPlayMode(play_mode_t* pm){
+    pm->mode = 1;   // set initial play mode to single-player
+    return *pm;
+}
+
 
 
 void drawTile(int pos_x, int pos_y, tile_t* colored_tile){
@@ -689,27 +722,12 @@ void xGetButtonInput(void)
 void checkForGameInput(void){
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
 
-        // if R has been pressed, reset the game
-        if (buttons.buttons[KEYCODE(R)]){
-            buttons.buttons[KEYCODE(R)] = 0;
-            xSemaphoreGive(ResetGameSignal);
-            xSemaphoreGive(buttons.lock);
-        }
-
         // if A has been pressed, call moveToLeft
         if(buttons.buttons[KEYCODE(A)]){
             buttons.buttons[KEYCODE(A)] = 0;
             xSemaphoreGive(MoveLeftSignal);
             xSemaphoreGive(buttons.lock);
         }
-
-        /*
-        // if S has been pressed, call moveDown
-        if (buttons.buttons[KEYCODE(S)]){
-            buttons.buttons[KEYCODE(S)] = 0;
-            // to be implemented
-            xSemaphoreGive(buttons.lock);
-        } */
 
         // if D has been pressed, call moveToRight
         if (buttons.buttons[KEYCODE(D)]){
@@ -763,6 +781,13 @@ void checkForFunctionalityInput(void){
             xSemaphoreGive(buttons.lock);
         }
 
+        // if R has been pressed, reset the game
+        if (buttons.buttons[KEYCODE(R)]){
+            buttons.buttons[KEYCODE(R)] = 0;
+            xSemaphoreGive(ResetGameSignal);
+            xSemaphoreGive(buttons.lock);
+        }
+
         // if E has been pressed, exit to main menu
         if(buttons.buttons[KEYCODE(E)]){
             buttons.buttons[KEYCODE(E)] = 0;  
@@ -771,28 +796,48 @@ void checkForFunctionalityInput(void){
                 xQueueSend(StateMachineQueue, &main_menu_signal, 0);
             }
             xSemaphoreGive(buttons.lock);
+        }        
+    }
+    xSemaphoreGive(buttons.lock);
+}
+
+void vCheckForMainMenuInput(void){
+
+    if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
+        // if ENTER has been pressed in the main menu, start playing
+        if(buttons.buttons[KEYCODE(RETURN)]){
+            buttons.buttons[KEYCODE(RETURN)] = 0;        
+            if (StateMachineQueue){
+                xSemaphoreGive(ResetGameSignal);
+                xQueueSend(StateMachineQueue, &single_playing_signal, 1);
+                xSemaphoreGive(buttons.lock);
+            }
         }
 
-        // if Enter has been pressed in the main menu, start playing
-        if(buttons.buttons[KEYCODE(RETURN)]){
-            buttons.buttons[KEYCODE(RETURN)] = 0;  
-        
-            if (StateMachineQueue){
-
-                if (current_state.lock){
-                    if (xSemaphoreTake(current_state.lock, 0) == pdTRUE){
-
-                        if (getCurrentState(&current_state) == main_menu_signal){
-                            xQueueSend(StateMachineQueue, &single_playing_signal, 0);
-                            xSemaphoreGive(current_state.lock);
-                        }
-                    }
-                    xSemaphoreGive(current_state.lock);
-                }
+        // if UP has been pressed in the main menu, increment level
+        if (buttons.buttons[KEYCODE(UP)]){
+            buttons.buttons[KEYCODE(UP)] = 0;
+            if (LevelChangingQueue){
+                xQueueSend(LevelChangingQueue, &increment_level, 0);
+                xSemaphoreGive(buttons.lock);
             }
+        }
+
+        // if DOWN has been pressed in the main menu, decrement level
+        if (buttons.buttons[KEYCODE(DOWN)]){
+            buttons.buttons[KEYCODE(DOWN)] = 0;
+            if (LevelChangingQueue){
+                xQueueSend(LevelChangingQueue, &decrement_level, 0);
+                xSemaphoreGive(buttons.lock);
+            }
+        }
+
+        // if M has been pressed in the main menu, change play mode
+        if (buttons.buttons[KEYCODE(M)]){
+            buttons.buttons[KEYCODE(M)] = 0;
+            xSemaphoreGive(ChangePlayModeSignal);
             xSemaphoreGive(buttons.lock);
-        }        
-        
+        }
     }
     xSemaphoreGive(buttons.lock);
 }
@@ -1189,6 +1234,8 @@ void vLockingTetriminoIntoPlace(void *pvParameters){
     xTimerStop(LockingTetriminoTimer, 0);
 }
 
+
+
 void vResetGame(void *pvParameters){
 
     TickType_t last_change = xTaskGetTickCount();
@@ -1216,16 +1263,85 @@ void vResetGame(void *pvParameters){
                         if (xSemaphoreTake(statistics.lock, portMAX_DELAY) == pdTRUE){
                             statistics.cleared_lines = 0;
                             statistics.current_score = 0;
-                            statistics.level = 0;   // to be worked on once the level choice in the main menu is ready
                         }
                         xSemaphoreGive(statistics.lock);
                     }
                     xSemaphoreGive(statistics.lock);
 
+                    if (StateMachineQueue){
+                        xQueueSend(StateMachineQueue, &single_playing_signal, 0);
+                    }
+
                     // Spawn new tetrimino
                     xSemaphoreGive(GenerateBagSignal);
                     xSemaphoreGive(SpawnSignal);
+                }
+            }
+        }
+    }
+}
 
+void vChangeLevel(void *pvParameters){
+    int level_change_buffer = 0;
+    TickType_t last_change = xTaskGetTickCount();
+
+    while(1){
+        if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
+            last_change = xTaskGetTickCount();
+
+            if (LevelChangingQueue){
+                if (xQueueReceive(LevelChangingQueue, &level_change_buffer, portMAX_DELAY) == pdTRUE){
+                    printf("Level change: %i\n", level_change_buffer);
+
+                    if (statistics.lock){
+                        if (xSemaphoreTake(statistics.lock, portMAX_DELAY) == pdTRUE){
+
+                            if (statistics.level + level_change_buffer > MAX_STARTING_LEVEL){
+                                statistics.level = 0;
+                            }
+                            else if (statistics.level + level_change_buffer < 0){
+                                statistics.level = MAX_STARTING_LEVEL;
+                            }
+                            else{
+                                statistics.level = statistics.level + level_change_buffer;
+                            }
+
+                            xSemaphoreGive(statistics.lock);
+                        }
+                        xSemaphoreGive(statistics.lock);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void vChangePlayMode(void *pvParameters){
+    TickType_t last_change = xTaskGetTickCount();
+
+    while(1){
+        if(ChangePlayModeSignal){
+            if (xSemaphoreTake(ChangePlayModeSignal, portMAX_DELAY) == pdTRUE){
+
+                if (xTaskGetTickCount() - last_change > BUTTON_DEBOUNCE_DELAY){
+                    last_change = xTaskGetTickCount();
+
+                    if (play_mode.lock){
+                        if (xSemaphoreTake(play_mode.lock, portMAX_DELAY) == pdTRUE){
+
+                            if (play_mode.mode == 1){
+                                play_mode.mode = 2;  // change play mode to two-player mode
+                                printf("Play mode: %i\n", play_mode.mode);
+                            }
+                            else if (play_mode.mode == 2){
+                                play_mode.mode = 1; // change play mode to single-player mode
+                                printf("Play mode: %i\n", play_mode.mode);
+                            }
+                            xSemaphoreGive(play_mode.lock);
+                        }
+                        xSemaphoreGive(play_mode.lock);
+                    }
+                
                 }
             }
         }
@@ -1233,25 +1349,109 @@ void vResetGame(void *pvParameters){
 }
 
 
+
 void vMainMenu(void *pvParameters){
-    char text[50] = "Tetris - Main Menu";
-    int text_width = 0;
-    tumGetTextSize((char *) text, &text_width, NULL);
+    unsigned int text_color_single_player = Gray;
+    unsigned int text_color_two_player = Gray;
+
+    char headline_text[50] = "Tetris - Main Menu";
+    int headline_text_width = 0;
+    tumGetTextSize((char *) headline_text, &headline_text_width, NULL);
+
+    char play_mode_headline_text[50] = "Choose your play mode ( [M] ):";
+    int play_mode_headline_text_width = 0;
+    tumGetTextSize((char*) play_mode_headline_text, &play_mode_headline_text_width, NULL);
+
+    char single_player_mode_text[30] = "Single-Player Mode";
+    int single_player_mode_text_width = 0;
+    tumGetTextSize((char *) single_player_mode_text, &single_player_mode_text_width, NULL);
+
+    char two_player_mode_text[30] = "Two-Player Mode";
+    int two_player_mode_text_width = 0;
+    tumGetTextSize((char *) two_player_mode_text, &two_player_mode_text_width, NULL);
+
+    char press_enter_text[70] = "Press [Enter] to start a game with the selected options.";
+    int press_enter_text_width = 0;
+    tumGetTextSize((char *) press_enter_text, &press_enter_text_width, NULL);
+
+    char level_selection_text[50] = "Choose your starting level ( [UP] / [DOWN] ):";
+    int level_selection_text_width = 0;
+    tumGetTextSize((char *) level_selection_text, &level_selection_text_width, NULL);
+
+    char selected_level[5] = { 0 };
+    int selected_level_width = 0;
 
     while(1){
         if (DrawSignal){
             if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
 
                 xGetButtonInput();
-                checkForFunctionalityInput();
+                vCheckForMainMenuInput();
 
                 xSemaphoreTake(ScreenLock, portMAX_DELAY);
 
+                // Draw Background
                 tumDrawClear(Gray);
                 tumDrawFilledBox(PLAY_AREA_POSITION_X, PLAY_AREA_POSITION_Y, PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH, 
                             PLAY_AREA_HEIGHT_IN_TILES*TILE_HEIGHT, Black);
 
-                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, 20, TUMBlue);
+                // Draw Headline
+                tumDrawText(headline_text,SCREEN_WIDTH/2-headline_text_width/2, HEADLINE_POSITION, TUMBlue);
+
+                if (play_mode.lock){
+                    if (xSemaphoreTake(play_mode.lock, 0) == pdTRUE){
+                        if (play_mode.mode == 1){
+                            text_color_single_player = Green;
+                            text_color_two_player = Gray;
+                            tumDrawBox(SCREEN_WIDTH/2-PLAY_MODE_BUTTONS_OFFSET_X-1, PLAY_MODE_BUTTONS_POSITION_Y-1, PLAY_MODE_BUTTONS_WIDTH+3, 
+                                        PLAY_MODE_BUTTONS_HEIGHT+3, Lime);
+                        }
+                        else{
+                            text_color_single_player = Gray;
+                            text_color_two_player = Green;
+                            tumDrawBox(SCREEN_WIDTH/2+PLAY_MODE_BUTTONS_OFFSET_X-PLAY_MODE_BUTTONS_WIDTH-1, PLAY_MODE_BUTTONS_POSITION_Y-1, 
+                                        PLAY_MODE_BUTTONS_WIDTH+2, PLAY_MODE_BUTTONS_HEIGHT+3, Lime);
+                        }
+                        xSemaphoreGive(play_mode.lock);
+                    }
+                    xSemaphoreGive(play_mode.lock);
+                }
+
+                // Draw play mode options
+                tumDrawText(play_mode_headline_text, SCREEN_WIDTH/2-play_mode_headline_text_width/2, CHOICE_PLAY_MODE_TEXT_POSITION_Y, Lime);
+
+                tumDrawFilledBox(SCREEN_WIDTH/2-PLAY_MODE_BUTTONS_OFFSET_X, PLAY_MODE_BUTTONS_POSITION_Y, PLAY_MODE_BUTTONS_WIDTH, 
+                                PLAY_MODE_BUTTONS_HEIGHT, White);
+                tumDrawText(single_player_mode_text, SCREEN_WIDTH/2-PLAY_MODE_BUTTONS_OFFSET_X/2-single_player_mode_text_width/2-PLAY_MODES_TEXT_OFFSET_X,
+                                PLAY_MODE_BUTTONS_POSITION_Y+PLAY_MODE_BUTTONS_HEIGHT/5, text_color_single_player);
+
+                tumDrawFilledBox(SCREEN_WIDTH/2+PLAY_MODE_BUTTONS_OFFSET_X-PLAY_MODE_BUTTONS_WIDTH, PLAY_MODE_BUTTONS_POSITION_Y, PLAY_MODE_BUTTONS_WIDTH, 
+                                PLAY_MODE_BUTTONS_HEIGHT, White);
+                tumDrawText(two_player_mode_text, SCREEN_WIDTH/2+PLAY_MODE_BUTTONS_OFFSET_X/2-two_player_mode_text_width/2+PLAY_MODES_TEXT_OFFSET_X,
+                                PLAY_MODE_BUTTONS_POSITION_Y+PLAY_MODE_BUTTONS_HEIGHT/5, text_color_two_player);
+
+                // Draw level selection options
+                tumDrawText(level_selection_text, SCREEN_WIDTH/2-level_selection_text_width/2, LEVEL_SELECTION_TEXT_POSITION_Y, Orange);
+                tumDrawFilledBox(SCREEN_WIDTH/2-LEVEL_SELECTION_BOX_WIDTH/2, LEVEL_SELECTION_BOX_POSITION_Y, LEVEL_SELECTION_BOX_WIDTH, 
+                                LEVEL_SELECTION_BOX_HEIGHT, White);
+                tumDrawBox(SCREEN_WIDTH/2-LEVEL_SELECTION_BOX_WIDTH/2-1, LEVEL_SELECTION_BOX_POSITION_Y-1, LEVEL_SELECTION_BOX_WIDTH+3, 
+                                LEVEL_SELECTION_BOX_HEIGHT+3, Orange);
+                
+                // Get current level
+                if (statistics.lock){
+                    if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                        sprintf(selected_level, "%2u", statistics.level);
+                        xSemaphoreGive(statistics.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
+                }
+
+                // Display current level in the box
+                if(!tumGetTextSize((char *)selected_level, &selected_level_width, NULL))
+                    tumDrawText(selected_level, SCREEN_WIDTH/2-selected_level_width/2, LEVEL_SELECTION_BOX_POSITION_Y+LEVEL_SELECTION_BOX_HEIGHT/5, Orange);
+
+                // Draw Text for starting the game
+                tumDrawText(press_enter_text, SCREEN_WIDTH/2-press_enter_text_width/2, SCREEN_HEIGHT-60, White);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -1262,7 +1462,7 @@ void vMainMenu(void *pvParameters){
 
 void vTetrisStatePlaying(void *pvParameters){
 
-    char text[50] = "Playing (Press P to change state)";
+    char text[50] = "Playing Single-Player Mode";
     int text_width = 0;
     tumGetTextSize((char *) text, &text_width, NULL);
 
@@ -1350,7 +1550,7 @@ void vTetrisStatePlaying(void *pvParameters){
 
 void vTetrisStatePaused(void *pvParameters){
 
-    char text[50] = "Paused (Press P to change state)";
+    char text[50] = "Paused Single-Player Mode";
     int text_width = 0;
     tumGetTextSize((char *) text, &text_width, NULL);
 
@@ -1427,6 +1627,7 @@ void vGameOverScreen(void *pvParameters){
 }
 
 
+
 int tetrisInit(void){
 
     DrawSignal = xSemaphoreCreateBinary(); // Screen buffer locking
@@ -1477,6 +1678,12 @@ int tetrisInit(void){
         goto err_drop_lookup_lock;
     }
 
+    play_mode.lock = xSemaphoreCreateMutex();
+    if (!play_mode.lock){
+        PRINT_ERROR("Failed to create play mode lock.");
+        goto err_play_mode_lock;
+    }
+
     GenerateBagSignal = xSemaphoreCreateBinary();
     if (!GenerateBagSignal){
         PRINT_ERROR("Failed to create generate bag signal.");
@@ -1519,11 +1726,23 @@ int tetrisInit(void){
         goto err_reset_game_signal;
     }
 
+    ChangePlayModeSignal = xSemaphoreCreateBinary();
+    if (!ChangePlayModeSignal){
+        PRINT_ERROR("Failed to create change game mode signal.");
+        goto err_change_play_mode_signal;
+    }
+
     // Message sending
     TetriminoSelectionQueue = xQueueCreate(TETRIMINO_BAG_SIZE, sizeof(char));
     if (!TetriminoSelectionQueue){
-        PRINT_ERROR("Coukd not open tetrimino selection queue.");
+        PRINT_ERROR("Could not open tetrimino selection queue.");
         goto err_selection_queue;
+    }
+
+    LevelChangingQueue = xQueueCreate(LEVEL_SELECTION_QUEUE_SIZE, sizeof(int));
+    if (!LevelChangingQueue){
+        PRINT_ERROR("Could not open level selection queue.");
+        goto err_level_queue;
     }
 
     // Timers
@@ -1616,7 +1835,21 @@ int tetrisInit(void){
                     &ResetGameTask) != pdPASS) {
         PRINT_TASK_ERROR("ResetGameTask");
         goto err_reset_game_task;
-    }      
+    }   
+
+    if (xTaskCreate(vChangeLevel, "ChangeLevelTask", 
+                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+1,
+                    &ChangeLevelTask) != pdPASS){
+        PRINT_TASK_ERROR("ChangeLevelTask");
+        goto err_change_level_task;
+    }   
+
+    if (xTaskCreate(vChangePlayMode, "ChangePlayModeTask", 
+                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+1, 
+                    &ChangePlayModeTask) != pdPASS){
+        PRINT_TASK_ERROR("ChangePlayModeTask");
+        goto err_change_play_mode_task;
+    }
 
     vTaskSuspend(MainMenuTask);
     vTaskSuspend(TetrisStatePlayingTask);
@@ -1630,17 +1863,25 @@ int tetrisInit(void){
     vTaskSuspend(MoveTetriminoToTheLeftTask);
     vTaskSuspend(RotateTetriminoCWTask);
     vTaskSuspend(RotateTetriminoCCWTask);
+
     vTaskSuspend(ResetGameTask);
+    vTaskSuspend(ChangeLevelTask);
+    vTaskSuspend(ChangePlayModeTask);
 
     orientation_table = initOrientationTable(&orientation_table);
     playfield = initPlayArea(&playfield);
     statistics = initStatistics(&statistics);
     drop_lookup = initDropLookUpTable(&drop_lookup);
+    play_mode = initPlayMode(&play_mode);
 
     srand(time(NULL));
 
     return 0;
 
+err_change_play_mode_task:
+    vTaskDelete(ChangePlayModeTask);
+err_change_level_task:
+    vTaskDelete(ChangeLevelTask);
 err_reset_game_task:
     vTaskDelete(ResetGameTask);
 err_rotate_tetrimino_counterclockwise:
@@ -1669,9 +1910,13 @@ err_main_menu_task:
 err_locking_timer:  
     xTimerDelete(LockingTetriminoTimer, 0);
 
+err_level_queue:
+    vQueueDelete(LevelChangingQueue);
 err_selection_queue:
     vQueueDelete(TetriminoSelectionQueue);
 
+err_change_play_mode_signal:
+    vSemaphoreDelete(ChangePlayModeSignal);
 err_reset_game_signal:
     vSemaphoreDelete(ResetGameSignal);
 err_rotate_counterclockwise_signal:
@@ -1687,6 +1932,8 @@ err_spawn_signal:
 err_generate_bag_signal:
     vSemaphoreDelete(GenerateBagSignal);
 
+err_play_mode_lock:
+    vSemaphoreDelete(play_mode.lock);
 err_drop_lookup_lock:
     vSemaphoreDelete(drop_lookup.lock);
 err_statistics_lock:

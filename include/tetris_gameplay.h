@@ -16,7 +16,10 @@ extern TaskHandle_t MoveTetriminoToTheRightTask;
 extern TaskHandle_t MoveTetriminoToTheLeftTask;
 extern TaskHandle_t RotateTetriminoCWTask;
 extern TaskHandle_t RotateTetriminoCCWTask;
+
 extern TaskHandle_t ResetGameTask;
+extern TaskHandle_t ChangeLevelTask;
+extern TaskHandle_t ChangePlayModeTask;
 
 int tetrisInit(void);
 
