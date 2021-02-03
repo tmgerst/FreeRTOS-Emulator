@@ -159,6 +159,12 @@ typedef struct play_mode {
     SemaphoreHandle_t lock;
 } play_mode_t;
 
+typedef struct high_scores{
+    int starting_level;
+    int score[MAX_STARTING_LEVEL+1][3]; // the three highest scores for each level will be displayed
+    SemaphoreHandle_t lock;
+} high_scores_t;
+
 
 buttons_buffer_t buttons = { 0 };
 t_or_table_t orientation_table = { 0 };
@@ -167,6 +173,8 @@ tetrimino_t tetrimino = { 0 };
 stats_t statistics = { 0 };
 drop_speed_table_t drop_lookup = { 0 };
 play_mode_t play_mode = { 0 };
+high_scores_t high_scores = { 0 };
+
 
 // Two required function prototypes for the init functions
 void clearTetriminoGrid(tetrimino_t* t);
@@ -375,6 +383,15 @@ play_mode_t initPlayMode(play_mode_t* pm){
     return *pm;
 }
 
+high_scores_t initHighScores(high_scores_t* hs){
+    hs->starting_level = 0;
+    for (int i = 0; i <= MAX_STARTING_LEVEL; i++){
+        hs->score[i][0] = 0;
+        hs->score[i][1] = 0;
+        hs->score[i][2] = 0;
+    }
+    return *hs;
+}
 
 
 void drawTile(int pos_x, int pos_y, tile_t* colored_tile){
@@ -709,6 +726,32 @@ void drawStatistics(stats_t* statistics){
                 155, White);
 }
 
+// Needs to be called with both the statistics mutex and the high scores mutex obtained!
+void updateHighScores(stats_t* statistics, high_scores_t* high_scores){
+
+    // check if third highest high score needs to be updated
+    if (statistics->current_score >= high_scores->score[high_scores->starting_level][2] &&
+        statistics->current_score < high_scores->score[high_scores->starting_level][1]){
+            high_scores->score[high_scores->starting_level][2] = statistics->current_score;
+    }
+
+    // check if second highest high score needs to be updated
+    if (statistics->current_score >= high_scores->score[high_scores->starting_level][1] &&
+        statistics->current_score < high_scores->score[high_scores->starting_level][0]){
+            // push former second position to third
+            high_scores->score[high_scores->starting_level][2] = high_scores->score[high_scores->starting_level][1];
+            // update second position
+            high_scores->score[high_scores->starting_level][1] = statistics->current_score;
+    }
+
+    // check if highest high score needs to be updated
+    if (statistics->current_score >= high_scores->score[high_scores->starting_level][0]){
+            // push former first position to second
+            high_scores->score[high_scores->starting_level][1] = high_scores->score[high_scores->starting_level][0];
+            // update first position
+            high_scores->score[high_scores->starting_level][0] = statistics->current_score;
+    }
+}
 
 
 void xGetButtonInput(void)
@@ -788,10 +831,28 @@ void checkForFunctionalityInput(void){
             xSemaphoreGive(buttons.lock);
         }
 
-        // if E has been pressed, exit to main menu
+        // if E has been pressed, update high scores and exit to main menu
         if(buttons.buttons[KEYCODE(E)]){
             buttons.buttons[KEYCODE(E)] = 0;  
 
+            // update high scores
+            if (statistics.lock){
+                if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+
+                    if (high_scores.lock){
+                        if (xSemaphoreTake(high_scores.lock, 0) == pdTRUE){
+
+                            updateHighScores(&statistics, &high_scores);
+                            xSemaphoreGive(high_scores.lock);
+                        }
+                        xSemaphoreGive(high_scores.lock);
+                    }
+                    xSemaphoreGive(statistics.lock);
+                }
+                xSemaphoreGive(statistics.lock);
+            }
+
+            // exit to main menu
             if (StateMachineQueue){
                 xQueueSend(StateMachineQueue, &main_menu_signal, 0);
             }
@@ -808,7 +869,7 @@ void vCheckForMainMenuInput(void){
         if(buttons.buttons[KEYCODE(RETURN)]){
             buttons.buttons[KEYCODE(RETURN)] = 0;        
             if (StateMachineQueue){
-                xSemaphoreGive(ResetGameSignal);
+                xSemaphoreGive(ResetGameSignal); printf("Reset game signal given.\n");
                 xQueueSend(StateMachineQueue, &single_playing_signal, 1);
                 xSemaphoreGive(buttons.lock);
             }
@@ -999,8 +1060,7 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
                 }
             }
             xSemaphoreGive(tetrimino.lock);
-        }
-        
+        }  
         vTaskDelay(drop_delay);
     }
 }
@@ -1258,9 +1318,18 @@ void vResetGame(void *pvParameters){
                     }
                     xSemaphoreGive(playfield.lock);
 
-                    // Reset statistics
+                    // Update high scores and reset statistics
                     if (statistics.lock){
                         if (xSemaphoreTake(statistics.lock, portMAX_DELAY) == pdTRUE){
+                            if (high_scores.lock){
+                                if (xSemaphoreTake(high_scores.lock, 0) == pdTRUE){
+
+                                    updateHighScores(&statistics, &high_scores);
+                                    xSemaphoreGive(high_scores.lock);
+                                }
+                                xSemaphoreGive(high_scores.lock);
+                            }
+
                             statistics.cleared_lines = 0;
                             statistics.current_score = 0;
                         }
@@ -1293,6 +1362,7 @@ void vChangeLevel(void *pvParameters){
                 if (xQueueReceive(LevelChangingQueue, &level_change_buffer, portMAX_DELAY) == pdTRUE){
                     printf("Level change: %i\n", level_change_buffer);
 
+                    // Update level in the statistics struct
                     if (statistics.lock){
                         if (xSemaphoreTake(statistics.lock, portMAX_DELAY) == pdTRUE){
 
@@ -1304,6 +1374,15 @@ void vChangeLevel(void *pvParameters){
                             }
                             else{
                                 statistics.level = statistics.level + level_change_buffer;
+                            }
+
+                            // Update the high scores struct with the current starting level
+                            if (high_scores.lock){
+                                if (xSemaphoreTake(high_scores.lock, 0) == pdTRUE){
+                                    high_scores.starting_level = statistics.level;
+                                    xSemaphoreGive(high_scores.lock);
+                                }
+                                xSemaphoreGive(high_scores.lock);
                             }
 
                             xSemaphoreGive(statistics.lock);
@@ -1381,6 +1460,15 @@ void vMainMenu(void *pvParameters){
     char selected_level[5] = { 0 };
     int selected_level_width = 0;
 
+    char high_score_headline_text[50] = { 0 };
+    int high_score_headline_text_width = 0;
+    char first_high_score_text_buffer[20] = { 0 };
+    int first_high_score_text_buffer_width = 0;
+    char second_high_score_text_buffer[20] = { 0 };
+    int second_high_score_text_buffer_width = 0;
+    char third_high_score_text_buffer[20] = { 0 };
+    int third_high_score_text_buffer_width = 0;
+
     while(1){
         if (DrawSignal){
             if (xSemaphoreTake(DrawSignal, portMAX_DELAY) == pdTRUE){
@@ -1398,6 +1486,8 @@ void vMainMenu(void *pvParameters){
                 // Draw Headline
                 tumDrawText(headline_text,SCREEN_WIDTH/2-headline_text_width/2, HEADLINE_POSITION, TUMBlue);
 
+
+                // Determine which play mode is currently chosen and modify the drawing accordingly
                 if (play_mode.lock){
                     if (xSemaphoreTake(play_mode.lock, 0) == pdTRUE){
                         if (play_mode.mode == 1){
@@ -1430,6 +1520,7 @@ void vMainMenu(void *pvParameters){
                 tumDrawText(two_player_mode_text, SCREEN_WIDTH/2+PLAY_MODE_BUTTONS_OFFSET_X/2-two_player_mode_text_width/2+PLAY_MODES_TEXT_OFFSET_X,
                                 PLAY_MODE_BUTTONS_POSITION_Y+PLAY_MODE_BUTTONS_HEIGHT/5, text_color_two_player);
 
+
                 // Draw level selection options
                 tumDrawText(level_selection_text, SCREEN_WIDTH/2-level_selection_text_width/2, LEVEL_SELECTION_TEXT_POSITION_Y, Orange);
                 tumDrawFilledBox(SCREEN_WIDTH/2-LEVEL_SELECTION_BOX_WIDTH/2, LEVEL_SELECTION_BOX_POSITION_Y, LEVEL_SELECTION_BOX_WIDTH, 
@@ -1440,8 +1531,9 @@ void vMainMenu(void *pvParameters){
                 // Get current level
                 if (statistics.lock){
                     if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+
                         sprintf(selected_level, "%2u", statistics.level);
-                        xSemaphoreGive(statistics.lock);
+                          xSemaphoreGive(statistics.lock);
                     }
                     xSemaphoreGive(statistics.lock);
                 }
@@ -1449,6 +1541,33 @@ void vMainMenu(void *pvParameters){
                 // Display current level in the box
                 if(!tumGetTextSize((char *)selected_level, &selected_level_width, NULL))
                     tumDrawText(selected_level, SCREEN_WIDTH/2-selected_level_width/2, LEVEL_SELECTION_BOX_POSITION_Y+LEVEL_SELECTION_BOX_HEIGHT/5, Orange);
+
+                // Update starting level for high scores based on current user decision
+                if (high_scores.lock){
+                    if (xSemaphoreTake(high_scores.lock, 0) == pdTRUE){
+
+                        sprintf(high_score_headline_text, "Highscores for starting level: %2i", high_scores.starting_level);
+                        sprintf(first_high_score_text_buffer, "1. %10i", high_scores.score[high_scores.starting_level][0]);
+                        sprintf(second_high_score_text_buffer, "2. %10i", high_scores.score[high_scores.starting_level][1]);
+                        sprintf(third_high_score_text_buffer, "3. %10i", high_scores.score[high_scores.starting_level][2]);
+
+                        xSemaphoreGive(high_scores.lock);
+                    }
+                    xSemaphoreGive(high_scores.lock);
+                }
+
+                // Draw high score texts
+                if(!tumGetTextSize((char *)high_score_headline_text, &high_score_headline_text_width, NULL))
+                    tumDrawText(high_score_headline_text, SCREEN_WIDTH/2-high_score_headline_text_width/2, 250, White);
+
+                if(!tumGetTextSize((char *)first_high_score_text_buffer, &first_high_score_text_buffer_width, NULL))
+                    tumDrawText(first_high_score_text_buffer, SCREEN_WIDTH/2-first_high_score_text_buffer_width/2, 280, White);
+
+                if(!tumGetTextSize((char *)second_high_score_text_buffer, &second_high_score_text_buffer_width, NULL))
+                    tumDrawText(second_high_score_text_buffer, SCREEN_WIDTH/2-second_high_score_text_buffer_width/2, 310, White);
+
+                if(!tumGetTextSize((char *)third_high_score_text_buffer, &third_high_score_text_buffer_width, NULL))
+                    tumDrawText(third_high_score_text_buffer, SCREEN_WIDTH/2-third_high_score_text_buffer_width/2, 340, White);
 
                 // Draw Text for starting the game
                 tumDrawText(press_enter_text, SCREEN_WIDTH/2-press_enter_text_width/2, SCREEN_HEIGHT-60, White);
@@ -1508,12 +1627,18 @@ void vTetrisStatePlaying(void *pvParameters){
                     if (lines_to_clear > 0){
                         if (statistics.lock){
                             if (xSemaphoreTake(statistics.lock, 0) == pdTRUE){
+                                // Update cleared lines and current score
                                 statistics.cleared_lines += lines_to_clear;
                                 statistics.current_score += statistics.score_lookup_table[lines_to_clear-1] * (statistics.level+1);
                                 
                                 // Check if the level needs to be incremented
                                 if (statistics.cleared_lines >= statistics.advance_level_lookup[statistics.level]){
                                     statistics.level++;
+
+                                    // Check if highest level has been reached
+                                    if (statistics.level > MAX_STARTING_LEVEL){
+                                        statistics.level = MAX_STARTING_LEVEL;
+                                    }
                                     xSemaphoreGive(statistics.lock);
                                 }
                             }
@@ -1684,6 +1809,13 @@ int tetrisInit(void){
         goto err_play_mode_lock;
     }
 
+    high_scores.lock = xSemaphoreCreateMutex();
+    if (!high_scores.lock){
+        PRINT_ERROR("Failed to create high scores lock.");
+        goto err_high_scores_lock;
+    }
+
+    // Binary Semaphores for signaling
     GenerateBagSignal = xSemaphoreCreateBinary();
     if (!GenerateBagSignal){
         PRINT_ERROR("Failed to create generate bag signal.");
@@ -1873,6 +2005,7 @@ int tetrisInit(void){
     statistics = initStatistics(&statistics);
     drop_lookup = initDropLookUpTable(&drop_lookup);
     play_mode = initPlayMode(&play_mode);
+    high_scores = initHighScores(&high_scores);
 
     srand(time(NULL));
 
@@ -1932,6 +2065,8 @@ err_spawn_signal:
 err_generate_bag_signal:
     vSemaphoreDelete(GenerateBagSignal);
 
+err_high_scores_lock:
+    vSemaphoreDelete(high_scores.lock);
 err_play_mode_lock:
     vSemaphoreDelete(play_mode.lock);
 err_drop_lookup_lock:
