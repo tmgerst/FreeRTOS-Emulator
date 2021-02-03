@@ -5,6 +5,7 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+#include "timers.h"
 
 #include "TUM_Ball.h"
 #include "TUM_Draw.h"
@@ -15,6 +16,7 @@
 
 #include "AsyncIO.h"
 
+#include "tetris_functionality.h"
 #include "tetris_gameplay.h"
 #include "main.h"
 
@@ -361,8 +363,9 @@ int main(int argc, char *argv[])
         PRINT_TASK_ERROR("BufferSwapTask");
         goto err_bufferswap;
     }
-    
-    tetrisInit();
+
+    tetrisFunctionalityInit();
+    tetrisGameplayInit();
 
     vTaskStartScheduler();
 
