@@ -13,6 +13,10 @@ extern SemaphoreHandle_t DrawSignal;
 
 extern QueueHandle_t StateMachineQueue;
 
+/**
+ * @brief Shared variable that holds the current state of the game, 
+ * ie whether it is in the main menu or in the single playing mode.
+ */
 typedef struct states{
     unsigned char state; 
     SemaphoreHandle_t lock;
@@ -28,6 +32,12 @@ extern const unsigned char double_paused_signal;
 extern const unsigned char game_over_signal;
 
 void vDrawFPS(void);
+
+/**
+ * @brief Retrieves the current state of the game, ie double paused or main menu.
+ * 
+ * @param state A pointer to the shared variable holding the current state.
+ */
 unsigned char getCurrentState(states_t* state);
 
 #endif // __MAIN_H__

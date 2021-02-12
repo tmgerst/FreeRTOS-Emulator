@@ -1,5 +1,10 @@
-// Created: 03.02.2021, Author: Tim Gerstewitz
-// Source file for the functional part of the tetris project, ie state tasks, button inputs, state transitions, etc.
+/**
+ * @file tetris_functionality.c
+ * @author Tim Gerstewitz
+ * @date 3rd February 2021
+ * @brief Source file for the functional parts of the tetris project, that is, button presses, statistics, not gameplay-related drawings, and generally
+ * all things that don't have an immediate relation to the gameplay part of the project.
+ */
 
 #include <stdlib.h>
 #include <time.h>
@@ -23,6 +28,11 @@
 #include "main.h"
 #include "queue.h"
 
+#define POINTS_FOR_CLEARING_ONE_LINE 40
+#define POINTS_FOR_CLEARING_TWO_LINES 100
+#define POINTS_FOR_CLEARING_THREE_LINES 300
+#define POINTS_FOR_CLEARING_FOUR_LINES 1200
+
 #define HEADLINE_POSITION 20
 
 #define CHOICE_PLAY_MODE_TEXT_POSITION_Y 80
@@ -37,8 +47,29 @@
 #define LEVEL_SELECTION_BOX_WIDTH 80
 #define LEVEL_SELECTION_BOX_HEIGHT 30
 
+#define HIGH_SCORE_TEXT_POSTION_Y 250
+#define HIGH_SCORE_TEXT_OFFSET 30
+
+#define CURRENT_STATE_DESCRIPITION_OFFSET_Y 60
+
+#define STATISTICS_SCORE_POSITION_Y 20
+#define STATISTICS_VALUE_OFFSET 15
+#define STATISTICS_TEXT_OFFSET 60
+
+#define NEXT_TERIMINO_DISPLAY_WIDTH_IN_TILES 4
+#define NEXT_TETRIMINO_DISPLAY_HEIGHT_IN_TILES 4
+#define NEXT_TETRIMINO_DISPLAY_POSITION_Y 220
+
+#define CONTROL_BUTTONS_POSITION_X 15
+#define CONTROL_DESCRIPTIONS_POSITION_X 75
+#define CONTROLS_TEXT_OFFSET 20
+#define FUNCTIONALITIY_CONTROLS_POSITION_Y 120
+
 #define LEVEL_SELECTION_QUEUE_SIZE 1
 #define GENERATOR_MODE_QUEUE_SIZE 1
+
+#define GENERATOR_INACTIVE 0
+#define GENERATOR_ACTIVE 1
 
 #define COMMAND_NEXT "NEXT"
 #define COMMAND_MODE "MODE"
@@ -101,16 +132,21 @@ next_tetrimino_display_t next_display = { 0 };
 aIO_handle_t udp_soc_receive = NULL;
 
 
-
+/**
+ * @brief Initializes a previously created empty statistics object.
+ *
+ * @param statistics A previously created, empty stats struct as a pointer.
+ * @return The stats struct which was passed in filled with the appropriate information.
+ */
 stats_t initStatistics(stats_t* statistics){
     statistics->current_score = 0;
     statistics->cleared_lines = 0;
     statistics->level = 0;
 
-    statistics->score_lookup_table[0] = 40;     // points for clearing one line at level zero
-    statistics->score_lookup_table[1] = 100;    // points for clearing two lines at level zero
-    statistics->score_lookup_table[2] = 300;    // points for clearing three lines at level zero
-    statistics->score_lookup_table[3] = 1200;   // points for clearing four lines at level zero --> a TETRIS
+    statistics->score_lookup_table[0] = POINTS_FOR_CLEARING_ONE_LINE;     // points for clearing one line at level zero
+    statistics->score_lookup_table[1] = POINTS_FOR_CLEARING_TWO_LINES;    // points for clearing two lines at level zero
+    statistics->score_lookup_table[2] = POINTS_FOR_CLEARING_THREE_LINES;    // points for clearing three lines at level zero
+    statistics->score_lookup_table[3] = POINTS_FOR_CLEARING_FOUR_LINES;   // points for clearing four lines at level zero --> a TETRIS
 
     for (int i = 0; i <= MAX_STARTING_LEVEL; i++){
         statistics->advance_level_lookup[i] = (i+1) * 10;   // ie for advancing from level 8 to 9 the player needs 
@@ -120,12 +156,24 @@ stats_t initStatistics(stats_t* statistics){
     return *statistics;
 }
 
+/**
+ * @brief Initializes a previously created empty play mode object.
+ *
+ * @param pm A previously created, empty play_mode struct as a pointer.
+ * @return The play_mode struct which was passed in, where play mode has been initialized to SINGLE_MODE.
+ */
 play_mode_t initPlayMode(play_mode_t* pm){
     pm->mode = SINGLE_MODE;   // set initial play mode to single-player
     xSemaphoreGive(play_mode.lock);
     return *pm;
 }
 
+/**
+ * @brief Initializes a previously created empty high scores object.
+ *
+ * @param hs A previously created, empty high scores struct as a pointer.
+ * @return The high scores struct which was passed in, where all high scores have been initialitźed to zero.
+ */
 high_scores_t initHighScores(high_scores_t* hs){
     hs->starting_level = 0;
     for (int i = 0; i <= MAX_STARTING_LEVEL; i++){
@@ -136,15 +184,27 @@ high_scores_t initHighScores(high_scores_t* hs){
     return *hs;
 }
 
+/**
+ * @brief Initializes a previously created empty current_gen_mode object.
+ *
+ * @param gm A previously created, empty current_gen_mode struct as a pointer.
+ * @return The current_gen_mode struct which was passed in, with mode set to FAIR and generator_active set to INACTIVE.
+ */
 current_gen_mode_t initGeneratorMode(current_gen_mode_t* gm){
     gm->mode = "FAIR";
-    gm->generator_active = 0;
+    gm->generator_active = GENERATOR_INACTIVE;
     return *gm;
 }
 
+/**
+ * @brief Initializes a previously created empty next_tetrimino_display object.
+ *
+ * @param gm A previously created, empty next_tetrimino_display struct as a pointer.
+ * @return The next_tetrimino_display struct which was passed in, with all tiles set to Black as initial colors.
+ */
 next_tetrimino_display_t initNextTetriminoDisplay(next_tetrimino_display_t* ntd){
-    for (int r = 0; r < 4; r++){
-        for (int c = 0; c < 4; c++){
+    for (int r = 0; r < NEXT_TETRIMINO_DISPLAY_HEIGHT_IN_TILES; r++){
+        for (int c = 0; c < NEXT_TERIMINO_DISPLAY_WIDTH_IN_TILES; c++){
             ntd->display[r][c] = initTile(Black);
         }
     }
@@ -152,8 +212,13 @@ next_tetrimino_display_t initNextTetriminoDisplay(next_tetrimino_display_t* ntd)
     return *ntd;
 }
 
-
-// Needs to be called with both the statistics mutex and the high scores mutex obtained!
+/**
+ * @brief Checks if one of the three high scores has to be updated for the current starting level, and does so if it is needed.
+ * Needs to be called with both the statistics mutex and the high scores mutex obtained.
+ *
+ * @param statistics An initialized stats struct as a pointer. 
+ * @param high_scores An initialized high_scores struct as a pointer.
+ */
 void updateHighScores(stats_t* statistics, high_scores_t* high_scores){
 
     // check if third highest high score needs to be updated
@@ -189,6 +254,9 @@ void xGetButtonInput(void)
     }
 }
 
+/**
+ * @brief Checks if any of the buttons associated with functionality parts (P, R, E, M) have been pressed and triggers approriate actions.
+ */
 void checkForFunctionalityInput(void){
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
 
@@ -281,6 +349,9 @@ void checkForFunctionalityInput(void){
     xSemaphoreGive(buttons.lock);
 }
 
+/**
+ * @brief Checks if any of the buttons associated with the main menu (RETURN, UP, DOWN, M) have been pressed and triggers approriate actions.
+ */
 void vCheckForMainMenuInput(void){
 
     if (xSemaphoreTake(buttons.lock, 0) == pdTRUE){
@@ -338,7 +409,12 @@ void vCheckForMainMenuInput(void){
 }
 
 
-
+/**
+ * @brief Draws the current score, level and cleared lines to the screen while playing or paused.
+ * Needs to be called with the stats struct mutex obtained.
+ * 
+ * @param statistics An initialized stats struct that holds the current game's statistics.
+ */
 void drawStatistics(stats_t* statistics){
     char score_text[10] = "SCORE";
     int score_text_width = 0; tumGetTextSize((char *) score_text, &score_text_width, NULL);
@@ -356,21 +432,26 @@ void drawStatistics(stats_t* statistics){
     sprintf(lines_buffer, "%i", statistics->cleared_lines);
 
     tumDrawText(score_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                20, White);
+                STATISTICS_SCORE_POSITION_Y, White);
     tumDrawText(score_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                35, White);
+                STATISTICS_SCORE_POSITION_Y+STATISTICS_VALUE_OFFSET, White);
 
     tumDrawText(level_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                80, White);
+                STATISTICS_SCORE_POSITION_Y+STATISTICS_TEXT_OFFSET, White);
     tumDrawText(level_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                95, White);
+                STATISTICS_SCORE_POSITION_Y+STATISTICS_TEXT_OFFSET+STATISTICS_VALUE_OFFSET, White);
 
     tumDrawText(lines_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                140, White);
+                STATISTICS_SCORE_POSITION_Y+2*STATISTICS_TEXT_OFFSET, White);
     tumDrawText(lines_buffer, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                155, White);
+                STATISTICS_SCORE_POSITION_Y+2*STATISTICS_TEXT_OFFSET+STATISTICS_VALUE_OFFSET, White);
 }
 
+/**
+ * @brief Draws the next tetrimino display to the screen based on the next upcoming tetrimino
+ * 
+ * @param next_display An initialized next_tetrimino_display struct as a pointer.
+ */
 void drawNextTetrimino(next_tetrimino_display_t* next_display){
     char name_buffer = 0;
     char name_text[2] = { 0 };
@@ -390,8 +471,8 @@ void drawNextTetrimino(next_tetrimino_display_t* next_display){
         if (xSemaphoreTake(next_display->lock, 0) == pdTRUE){
             
             // Clear previous next tetrimino_display
-            for (int r = 0; r < 4; r++){
-                for (int c = 0; c < 4; c++){
+            for (int r = 0; r < NEXT_TETRIMINO_DISPLAY_HEIGHT_IN_TILES; r++){
+                for (int c = 0; c < NEXT_TERIMINO_DISPLAY_WIDTH_IN_TILES; c++){
                     next_display->display[r][c].color = Black;
                 }
             }
@@ -437,10 +518,10 @@ void drawNextTetrimino(next_tetrimino_display_t* next_display){
             }
 
             // Draw next tetrimino display
-            for (int r = 0; r < 4; r++){
-                for (int c = 0; c < 4; c++){
+            for (int r = 0; r < NEXT_TETRIMINO_DISPLAY_HEIGHT_IN_TILES; r++){
+                for (int c = 0; c < NEXT_TERIMINO_DISPLAY_WIDTH_IN_TILES; c++){
                     drawing_position_x = PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH + r*TILE_WIDTH;
-                    drawing_position_y = 220+c*TILE_HEIGHT;
+                    drawing_position_y = NEXT_TETRIMINO_DISPLAY_POSITION_Y+c*TILE_HEIGHT;
 
                     drawTile(drawing_position_x, drawing_position_y, &(next_display->display[r][c]));
                 }
@@ -451,33 +532,54 @@ void drawNextTetrimino(next_tetrimino_display_t* next_display){
     }
 
     tumDrawText(next_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                200, White);
-    /*
-    tumDrawText(name_text, PLAY_AREA_POSITION_X+PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH+TILE_WIDTH, 
-                215, White); */
+                STATISTICS_SCORE_POSITION_Y+3*STATISTICS_TEXT_OFFSET, White);
 }
 
 
+
+/**
+ * @brief Draws a "CONTROLS" to the screen.
+ */
 void drawControlsHeadline(void){
-    tumDrawText("CONTROLS", 15, 80, White);
+    tumDrawText("CONTROLS", CONTROL_BUTTONS_POSITION_X, STATISTICS_SCORE_POSITION_Y+STATISTICS_TEXT_OFFSET, White);
 }
 
+/**
+ * @brief Draws the controls for playing tetris to the screen.
+ */
 void drawPlayingControls(void){
-    tumDrawText("A", 15, 220, White);       tumDrawText("Move Left", 75, 220, White);
-    tumDrawText("D", 15, 240, White);       tumDrawText("Move Right", 75, 240, White);
-    tumDrawText("LEFT", 15, 260, White);    tumDrawText("Rotate CW", 75, 260, White);
-    tumDrawText("RIGHT", 15, 280, White);   tumDrawText("Rotate CCW", 75, 280, White);
+    tumDrawText("A", CONTROL_BUTTONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y, White);       
+    tumDrawText("Move Left", CONTROL_DESCRIPTIONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y, White);
+
+    tumDrawText("D", CONTROL_BUTTONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+CONTROLS_TEXT_OFFSET, White);       
+    tumDrawText("Move Right", CONTROL_DESCRIPTIONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+CONTROLS_TEXT_OFFSET, White);
+
+    tumDrawText("LEFT", CONTROL_BUTTONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+2*CONTROLS_TEXT_OFFSET, White);    
+    tumDrawText("Rotate CW", CONTROL_DESCRIPTIONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+2*CONTROLS_TEXT_OFFSET, White);
+
+    tumDrawText("RIGHT", CONTROL_BUTTONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+3*CONTROLS_TEXT_OFFSET, White);   
+    tumDrawText("Rotate CCW", CONTROL_DESCRIPTIONS_POSITION_X, NEXT_TETRIMINO_DISPLAY_POSITION_Y+3*CONTROLS_TEXT_OFFSET, White);
 }
 
+/**
+ * @brief Draws the controls for state transitions to the screen.
+ */
 void drawFunctionalityControls(void){
-    tumDrawText("R", 15, 120, White);    tumDrawText("Reset game", 75, 120, White);
-    tumDrawText("E", 15, 140, White);    tumDrawText("Exit to main menu", 75, 140, White);
-    tumDrawText("P", 15, 160, White);    tumDrawText("Pause / Resume", 75, 160, White);
+
+    tumDrawText("R", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y, White);    
+    tumDrawText("Reset game", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y, White);
+
+    tumDrawText("E", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+CONTROLS_TEXT_OFFSET, White);    
+    tumDrawText("Exit to main menu", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+CONTROLS_TEXT_OFFSET, White);
+
+    tumDrawText("P", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+2*CONTROLS_TEXT_OFFSET, White);    
+    tumDrawText("Pause / Resume", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+2*CONTROLS_TEXT_OFFSET, White);
 
     if (play_mode.lock){
         if (xSemaphoreTake(play_mode.lock, 0) == pdTRUE){
             if (play_mode.mode == DOUBLE_MODE){
-                tumDrawText("M", 15, 180, White);   tumDrawText("Change gen. mode", 75, 180, White);
+                tumDrawText("M", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+3*CONTROLS_TEXT_OFFSET, White);   
+                tumDrawText("Change gen. mode", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+3*CONTROLS_TEXT_OFFSET, White);
             }
             xSemaphoreGive(play_mode.lock);
         }
@@ -485,12 +587,24 @@ void drawFunctionalityControls(void){
     }
 }
 
+/**
+ * @brief Draws the controls for the game over screen to the screen.
+ */
 void drawGameOverControls(void){
-    tumDrawText("R", 15, 120, White);    tumDrawText("Reset game", 75, 120, White);
-    tumDrawText("E", 15, 140, White);    tumDrawText("Exit to main menu", 75, 140, White);
+    tumDrawText("R", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y, White);    
+    tumDrawText("Reset game", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y, White);
+
+    tumDrawText("E", CONTROL_BUTTONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+CONTROLS_TEXT_OFFSET, White);    
+    tumDrawText("Exit to main menu", CONTROL_DESCRIPTIONS_POSITION_X, FUNCTIONALITIY_CONTROLS_POSITION_Y+CONTROLS_TEXT_OFFSET, White);
 }
 
 
+
+/**
+ * @brief Implements the main menu state task. 
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vMainMenu(void *pvParameters){
     unsigned int text_color_single_player = Gray;
     unsigned int text_color_two_player = Gray;
@@ -542,7 +656,7 @@ void vMainMenu(void *pvParameters){
 
                 // Draw Background
                 tumDrawClear(Gray);
-                tumDrawFilledBox(PLAY_AREA_POSITION_X, PLAY_AREA_POSITION_Y, PLAY_AREA_WIDTH_IN_TILES*TILE_WIDTH, 
+                tumDrawFilledBox(140, PLAY_AREA_POSITION_Y, 360, 
                             PLAY_AREA_HEIGHT_IN_TILES*TILE_HEIGHT, Black);
 
                 // Draw Headline
@@ -620,19 +734,22 @@ void vMainMenu(void *pvParameters){
 
                 // Draw high score texts
                 if(!tumGetTextSize((char *)high_score_headline_text, &high_score_headline_text_width, NULL))
-                    tumDrawText(high_score_headline_text, SCREEN_WIDTH/2-high_score_headline_text_width/2, 250, White);
+                    tumDrawText(high_score_headline_text, SCREEN_WIDTH/2-high_score_headline_text_width/2, HIGH_SCORE_TEXT_POSTION_Y, White);
 
                 if(!tumGetTextSize((char *)first_high_score_text_buffer, &first_high_score_text_buffer_width, NULL))
-                    tumDrawText(first_high_score_text_buffer, SCREEN_WIDTH/2-first_high_score_text_buffer_width/2, 280, White);
+                    tumDrawText(first_high_score_text_buffer, SCREEN_WIDTH/2-first_high_score_text_buffer_width/2, 
+                                HIGH_SCORE_TEXT_POSTION_Y+HIGH_SCORE_TEXT_OFFSET, White);
 
                 if(!tumGetTextSize((char *)second_high_score_text_buffer, &second_high_score_text_buffer_width, NULL))
-                    tumDrawText(second_high_score_text_buffer, SCREEN_WIDTH/2-second_high_score_text_buffer_width/2, 310, White);
+                    tumDrawText(second_high_score_text_buffer, SCREEN_WIDTH/2-second_high_score_text_buffer_width/2, 
+                                HIGH_SCORE_TEXT_POSTION_Y+2*HIGH_SCORE_TEXT_OFFSET, White);
 
                 if(!tumGetTextSize((char *)third_high_score_text_buffer, &third_high_score_text_buffer_width, NULL))
-                    tumDrawText(third_high_score_text_buffer, SCREEN_WIDTH/2-third_high_score_text_buffer_width/2, 340, White);
+                    tumDrawText(third_high_score_text_buffer, SCREEN_WIDTH/2-third_high_score_text_buffer_width/2, 
+                                HIGH_SCORE_TEXT_POSTION_Y+3*HIGH_SCORE_TEXT_OFFSET, White);
 
                 // Draw Text for starting the game
-                tumDrawText(press_enter_text, SCREEN_WIDTH/2-press_enter_text_width/2, SCREEN_HEIGHT-60, White);
+                tumDrawText(press_enter_text, SCREEN_WIDTH/2-press_enter_text_width/2, SCREEN_HEIGHT-CURRENT_STATE_DESCRIPITION_OFFSET_Y, White);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -641,6 +758,11 @@ void vMainMenu(void *pvParameters){
     }
 }
 
+/**
+ * @brief Implements the single playing state task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vTetrisStateSinglePlaying(void *pvParameters){
 
     char text[50] = "Playing Single-Player Mode";
@@ -732,7 +854,7 @@ void vTetrisStateSinglePlaying(void *pvParameters){
                 drawPlayingControls();
                 drawFunctionalityControls();
 
-                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Lime);
+                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-CURRENT_STATE_DESCRIPITION_OFFSET_Y, Lime);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -741,6 +863,11 @@ void vTetrisStateSinglePlaying(void *pvParameters){
     }
 }
 
+/**
+ * @brief Implements the single paused state task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vTetrisStateSinglePaused(void *pvParameters){
 
     char text[50] = "Paused Single-Player Mode";
@@ -780,7 +907,7 @@ void vTetrisStateSinglePaused(void *pvParameters){
                 drawControlsHeadline();
                 drawFunctionalityControls();
 
-                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Orange);
+                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-CURRENT_STATE_DESCRIPITION_OFFSET_Y, Orange);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -789,6 +916,11 @@ void vTetrisStateSinglePaused(void *pvParameters){
     }
 }
 
+/**
+ * @brief Implements the double playing state task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vTetrisStateDoublePlaying(void *pvParameters){
 
     char text[50] = "Playing Double-Player Mode";
@@ -884,13 +1016,13 @@ void vTetrisStateDoublePlaying(void *pvParameters){
                 drawPlayingControls();
 
                 // Draw the current generator mode to the screen
-                tumDrawText(mode_text, 15, 20, White);
+                tumDrawText(mode_text, CONTROL_BUTTONS_POSITION_X, CONTROLS_TEXT_OFFSET, White);
                 if (GetGeneratorModeQueue){
                     if (xQueueReceive(GetGeneratorModeQueue, mode_buffer, 0) == pdTRUE){
-                        tumDrawText(mode_buffer, 15, 35, White);
+                        tumDrawText(mode_buffer, CONTROL_BUTTONS_POSITION_X, 2*CONTROLS_TEXT_OFFSET, White);
                     }
                     else{
-                        tumDrawText(mode_buffer, 15, 35, White);
+                        tumDrawText(mode_buffer, CONTROL_BUTTONS_POSITION_X, 2*CONTROLS_TEXT_OFFSET, White);
                     }
                 }
 
@@ -899,7 +1031,7 @@ void vTetrisStateDoublePlaying(void *pvParameters){
                     if (xSemaphoreTake(generator_mode.lock, 0) == pdTRUE){
                         
                         generator_mode.mode = mode_buffer;
-                        if (generator_mode.generator_active == 0){
+                        if (generator_mode.generator_active == GENERATOR_INACTIVE){
                             if (StateMachineQueue){
                                 xSemaphoreGive(generator_mode.lock);
                                 if (xTimerIsTimerActive(IsGeneratorRunningTimer) == pdFALSE){
@@ -912,7 +1044,7 @@ void vTetrisStateDoublePlaying(void *pvParameters){
                     xSemaphoreGive(generator_mode.lock);
                 }
 
-                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Lime);
+                tumDrawText(text,SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-CURRENT_STATE_DESCRIPITION_OFFSET_Y, Lime);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -921,6 +1053,11 @@ void vTetrisStateDoublePlaying(void *pvParameters){
     }
 }
 
+/**
+ * @brief Implements the double playing state task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vTetrisStateDoublePaused(void *pvParameters){
 
     char text[50] = "Paused Double-Player Mode";
@@ -929,13 +1066,23 @@ void vTetrisStateDoublePaused(void *pvParameters){
 
     char mode_text[20] = "CURRENT MODE";
 
-    char gen_inactive_one[50] = "The tetris generator seems to be inactive.";
-    int gen_inactive_one_width = 0;
-    tumGetTextSize((char *) gen_inactive_one, &gen_inactive_one_width, NULL);
+    char gen_inactive_one[30] = "The tetris generator";
+    char gen_inactive_two[30] = "seems to be inactive.";
+    char gen_inactive_three[30] = "Please exit to main menu,";
+    char gen_inactive_four[30] = "start the generator and";
+    char gen_inactive_five[30] = "re-enter two player mode.";
 
-    char gen_inactive_two[100] = "Please exit to main menu, start the generator and re-enter two player mode.";
+    int gen_inactive_one_width = 0;
     int gen_inactive_two_width = 0;
+    int gen_inactive_three_width = 0;
+    int gen_inactive_four_width = 0;
+    int gen_inactive_five_width = 0;
+
+    tumGetTextSize((char *) gen_inactive_one, &gen_inactive_one_width, NULL);
     tumGetTextSize((char *) gen_inactive_two, &gen_inactive_two_width, NULL);
+    tumGetTextSize((char *) gen_inactive_three, &gen_inactive_three_width, NULL);
+    tumGetTextSize((char *) gen_inactive_four, &gen_inactive_four_width, NULL);
+    tumGetTextSize((char *) gen_inactive_five, &gen_inactive_five_width, NULL);
 
     while(1){
         if (DrawSignal){
@@ -970,18 +1117,24 @@ void vTetrisStateDoublePaused(void *pvParameters){
                 drawControlsHeadline();
                 drawFunctionalityControls();
 
-                tumDrawText(mode_text, 15, 20, White);
+                tumDrawText(mode_text, CONTROL_BUTTONS_POSITION_X, CONTROLS_TEXT_OFFSET, White);
 
                 // if generator is inactive, display text that says so
                 if (generator_mode.lock){
                     if (xSemaphoreTake(generator_mode.lock, 0) == pdTRUE){
 
-                        tumDrawText(generator_mode.mode, 15, 35, White);
-                        if (generator_mode.generator_active == 0){
-                            tumDrawText(gen_inactive_one, SCREEN_WIDTH/2-gen_inactive_one_width/2,
-                                        SCREEN_HEIGHT/2, White);
-                            tumDrawText(gen_inactive_two, SCREEN_WIDTH/2-gen_inactive_two_width/2,
-                                        SCREEN_HEIGHT/2+20, White);
+                        tumDrawText(generator_mode.mode, CONTROL_BUTTONS_POSITION_X, 2*CONTROLS_TEXT_OFFSET, White);
+                        if (generator_mode.generator_active == GENERATOR_INACTIVE){
+                            tumDrawText(gen_inactive_one, SCREEN_WIDTH/2-gen_inactive_one_width/2, 
+                                        FUNCTIONALITIY_CONTROLS_POSITION_Y+CONTROLS_TEXT_OFFSET, White);
+                            tumDrawText(gen_inactive_two, SCREEN_WIDTH/2-gen_inactive_two_width/2, 
+                                        FUNCTIONALITIY_CONTROLS_POSITION_Y+2*CONTROLS_TEXT_OFFSET, White);
+                            tumDrawText(gen_inactive_three, SCREEN_WIDTH/2-gen_inactive_three_width/2, 
+                                        FUNCTIONALITIY_CONTROLS_POSITION_Y+3*CONTROLS_TEXT_OFFSET, White);
+                            tumDrawText(gen_inactive_four, SCREEN_WIDTH/2-gen_inactive_four_width/2, 
+                                        FUNCTIONALITIY_CONTROLS_POSITION_Y+4*CONTROLS_TEXT_OFFSET, White);
+                            tumDrawText(gen_inactive_five, SCREEN_WIDTH/2-gen_inactive_five_width/2, 
+                                        FUNCTIONALITIY_CONTROLS_POSITION_Y+5*CONTROLS_TEXT_OFFSET, White);
                         }
 
                         xSemaphoreGive(generator_mode.lock);
@@ -989,7 +1142,7 @@ void vTetrisStateDoublePaused(void *pvParameters){
                     xSemaphoreGive(generator_mode.lock);
                 }
 
-                tumDrawText(text, SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-60, Orange);
+                tumDrawText(text, SCREEN_WIDTH/2-text_width/2, SCREEN_HEIGHT-CURRENT_STATE_DESCRIPITION_OFFSET_Y, Orange);
 
                 vDrawFPS();
                 xSemaphoreGive(ScreenLock);
@@ -998,6 +1151,11 @@ void vTetrisStateDoublePaused(void *pvParameters){
     }
 }
 
+/**
+ * @brief Implements the game over state task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vGameOverScreen(void *pvParameters){
     char text[50] = "Game over!";
     int text_width = 0;
@@ -1037,7 +1195,13 @@ void vGameOverScreen(void *pvParameters){
 }
 
 
-
+/**
+ * @brief Callback function for UDP communication, handles all incoming communication from the tetris generator.
+ * 
+ * @param read_size The size of the incoming transmission in chars.
+ * @param buffer Pointer to the content of the transmission.
+ * @param args Pointer to arguments of the transmission.
+ */
 void receiveUDPInput(size_t read_size, char *buffer, void *args){
     char sending_buffer[15] = { 0 };
 
@@ -1092,6 +1256,11 @@ void receiveUDPInput(size_t read_size, char *buffer, void *args){
     }
 }
 
+/**
+ * @brief Handles all outgoing UDP communication with the tetris generator.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vUDPControl(void *pvParameters){
 
     char *addr = NULL; // Loopback
@@ -1145,7 +1314,12 @@ void vUDPControl(void *pvParameters){
 }
 
 
-
+/**
+ * @brief Clears the playfield, spawns new tetriminos and resets the score, both in 
+ * single player and double player mode.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vResetGame(void *pvParameters){
 
     TickType_t last_change = xTaskGetTickCount();
@@ -1216,6 +1390,11 @@ void vResetGame(void *pvParameters){
     }
 }
 
+/**
+ * @brief Changes the starting level according to main menu selection by the user.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vChangeLevel(void *pvParameters){
     int level_change_buffer = 0;
     TickType_t last_change = xTaskGetTickCount();
@@ -1261,6 +1440,12 @@ void vChangeLevel(void *pvParameters){
     }
 }
 
+/**
+ * @brief Changes the play mode of the tetris game, either from single to double or from double to
+ * single mode. Only available in the main menu.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vChangePlayMode(void *pvParameters){
     TickType_t last_change = xTaskGetTickCount();
 
@@ -1294,6 +1479,12 @@ void vChangePlayMode(void *pvParameters){
     }
 }
 
+/**
+ * @brief Changes the generator mode sequentially by changing the current_gen_mode struct and requests the next
+ * mode via the UDP communication task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vChangeGeneratorMode(void *pvParameters){
 
     TickType_t last_change = xTaskGetTickCount();
@@ -1308,7 +1499,7 @@ void vChangeGeneratorMode(void *pvParameters){
                     if (generator_mode.lock){
                         if (xSemaphoreTake(generator_mode.lock, portMAX_DELAY) == pdTRUE){
                             
-                            if (generator_mode.generator_active == 1){
+                            if (generator_mode.generator_active == GENERATOR_ACTIVE){
 
                                 if (strcmp(generator_mode.mode, FIRST_GEN_MODE) == 0){
                                     printf("Current mode fair, changing to second mode.\n");
@@ -1350,10 +1541,16 @@ void vChangeGeneratorMode(void *pvParameters){
 
 }
 
+/**
+ * @brief Callback function for the timer that checks if the tetris generator has answered, If not, this routine is called, 
+ * which sets the generator mode to inactive and requests a state transition to the double paused state.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vGeneratorNotRunningRoutine(void *pvParameters){
     if (generator_mode.lock){
         if (xSemaphoreTake(generator_mode.lock, 0) == pdTRUE){
-            generator_mode.generator_active = 0;
+            generator_mode.generator_active = GENERATOR_INACTIVE;
             xSemaphoreGive(generator_mode.lock);
         }
         xSemaphoreGive(generator_mode.lock);

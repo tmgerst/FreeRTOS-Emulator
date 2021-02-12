@@ -1,5 +1,10 @@
-/* 20.01.2020, Author: Tim Gerstewitz */
-/* Source file for solely gameplay related code for the tetris project */
+/**
+ * @file tetris_gameplay.c
+ * @author Tim Gerstewitz
+ * @date 20th January 2021
+ * @brief Source file for the solely gameplay related parts of the tetris project, that is, moving down of a tetrimino, check if a line can be cleared, 
+ * check if a tetrimino is supported on the stack, et cetera.
+ */
 
 #include <stdlib.h>
 #include <time.h>
@@ -56,6 +61,8 @@ drop_speed_table_t drop_lookup = { 0 };
 
 
 // Two required function prototypes for the init functions
+
+
 void clearTetriminoGrid(tetrimino_t* t);
 void setTetriminoGridViaOrientation(t_or_table_t* or, tetrimino_t* t, int desired_orientation);
 
@@ -68,6 +75,12 @@ tile_t initTile(unsigned int color){
     return new_tile;
 }
 
+/**
+ * @brief Initializes a previously created, empty orientation table struct.
+ *
+ * @param or A pointer to a previously created, empty orientation table object.
+ * @return The orientation table object that was passed in, filled with the orientations of all tetrimino types.
+ */
 t_or_table_t initOrientationTable(t_or_table_t* or){
 
     // ------------------ T structure orientations-------------------------------------------------------
@@ -175,6 +188,12 @@ t_or_table_t initOrientationTable(t_or_table_t* or){
     return *or;
 }
 
+/**
+ * @brief Initializes a previously created, empty playarea struct.
+ *
+ * @param playarea A pointer to a previously created, empty playarea object.
+ * @return The playarea object that was passed in, with the size set and all tiles colored black.
+ */
 play_area_t initPlayArea(play_area_t* playarea){
 
     for (int r = 0; r < PLAY_AREA_HEIGHT_IN_TILES; r++){
@@ -189,6 +208,15 @@ play_area_t initPlayArea(play_area_t* playarea){
     return *playarea;
 }
 
+/**
+ * @brief Initializes a previously created, empty tetrimino struct.
+ *
+ * @param or A pointer to an already initialized orientation table object.
+ * @param t A pointer to a previously created, empty tetrimino object.
+ * @param name The desired shape of the tetrimino as a char, ie 'T'.
+ * @param color The desired color of the tetrimino.
+ * @return The playarea object that was passed in, with the size set and all tiles colored black.
+ */
 tetrimino_t initTetrimino(t_or_table_t* or, tetrimino_t* t, char name, unsigned int color){
     t->name = name;
     t->color = color;
@@ -221,6 +249,12 @@ tetrimino_t initTetrimino(t_or_table_t* or, tetrimino_t* t, char name, unsigned 
     return *t;
 }
 
+/**
+ * @brief Initializes a previously created, empty drop speed table struct.
+ *
+ * @param d A pointer to a previously created, empty drop speed table object.
+ * @return The drop speed table object that was passed in, filled with the drop speeds for each level.
+ */
 drop_speed_table_t initDropLookUpTable(drop_speed_table_t* d){
     // Drop speed of a tetrimmino encoded as milliseconds per drop
     // Taken from meatfighter.com/nintendotetrisai and slightly changed to fit the 50Hz of the Emulator
@@ -246,7 +280,11 @@ void drawTile(int pos_x, int pos_y, tile_t* colored_tile){
 }
 
 
-
+/**
+ * @brief Prints the play area colors to the console for debugging purposes.
+ *
+ * @param p A pointer to the currently used play area.
+ */
 void printPlayArea(play_area_t* p){
     printf("Playfield:\n");
     for (int r = 0; r < PLAY_AREA_HEIGHT_IN_TILES; r++){
@@ -257,7 +295,7 @@ void printPlayArea(play_area_t* p){
     }
 }
 
-void drawPlayArea(play_area_t* p){
+void drawPlayArea(play_area_t* playfield){
     int drawing_position_x = 0;
     int drawing_position_y = 0;
 
@@ -265,21 +303,25 @@ void drawPlayArea(play_area_t* p){
         for(int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
             drawing_position_x = PLAY_AREA_POSITION_X + c*TILE_WIDTH;
             drawing_position_y = PLAY_AREA_POSITION_Y + r*TILE_HEIGHT;
-            drawTile(drawing_position_x, drawing_position_y, &(p->tiles[r][c]));
+            drawTile(drawing_position_x, drawing_position_y, &(playfield->tiles[r][c]));
         }
     }
 }
 
-void clearPlayArea(play_area_t* p){
+void clearPlayArea(play_area_t* playfield){
     for (int r = 0; r < PLAY_AREA_HEIGHT_IN_TILES; r++){
         for (int c = 0; c < PLAY_AREA_WIDTH_IN_TILES; c++){
-            p->tiles[r][c].color = 0;
+            playfield->tiles[r][c].color = 0;
         }
     }
 }
 
 
-
+/**
+ * @brief Sets all tiles' color in the tetrimino grid to black.
+ *
+ * @param t A pointer to the currently used tetrimino object.
+ */
 void clearTetriminoGrid(tetrimino_t* t){
     for (int r = 0; r < TETRIMINO_GRID_HEIGHT; r++){
         for (int c = 0; c < TETRIMINO_GRID_WIDTH; c++){
@@ -288,7 +330,14 @@ void clearTetriminoGrid(tetrimino_t* t){
     }
 }
 
-/* Helper function to make code more readable */
+/**
+ * @brief Helper function that copies an orientation from the orientation table to the terimino's grid, effectively rotating it.
+ *
+ * @param array A pointer to the array that holds the desired orientation of the tetrimino. Therefore the array pointed to consists
+ * of 4 points with 2 coordinates each.
+ * @param t A pointer to the tetrimino currently in use.
+ * @param desired_orientation The index to the orientation in the orientation table. 
+ */
 void copyOrientationIntoTetriminoGrid(int array[][4][2], tetrimino_t* t, int desired_orientation){
         t->grid[array[desired_orientation][0][0]][array[desired_orientation][0][1]] = t->color;
         t->grid[array[desired_orientation][1][0]][array[desired_orientation][1][1]] = t->color;
@@ -298,6 +347,13 @@ void copyOrientationIntoTetriminoGrid(int array[][4][2], tetrimino_t* t, int des
         t->orientation = desired_orientation;
 }
 
+/**
+ * @brief Sets the tetrimino's orientation, used for rotation
+ *
+ * @param or Pointer to an already initialized orientation tabel struct.
+ * @param t A pointer to the tetrimino currently in use.
+ * @param desired_orientation The index to the orientation in the orientation table. 
+ */
 void setTetriminoGridViaOrientation(t_or_table_t* or, tetrimino_t* t, int desired_orientation){
     char name = t->name;
 
@@ -356,7 +412,11 @@ void setTetriminoGridViaOrientation(t_or_table_t* or, tetrimino_t* t, int desire
     }
 }
 
-/* Debugging function to view the tetrimino in the console */
+/**
+ * @brief Prints all parameters of a tetrimino to the console. Used for debugging.
+ *
+ * @param t A pointer to the tetrimino currently in use.
+ */
 void printTetriminoInformation(tetrimino_t* t){
     printf("Structure: %c\n", t->name);
     printf("Center position: %i %i\n", t->playfield_row, t->playfield_column);
@@ -370,12 +430,26 @@ void printTetriminoInformation(tetrimino_t* t){
     }
 }
 
-/* Helping function to get the tetrimino to the playfield */
+/**
+ * @brief Converts the tetriminos' tiles' row positions in its grid to playfield row coordinates, via the playfield row 
+ * parameter of the tetrimino struct, which refers to the center of the tetrimino grid. To get all tiles in the grid to the playarea,
+ * an offset is used.
+ *
+ * @param t A pointer to the tetrimino currently in use.
+ * @param offset An integer, to get non-center tiles of the tetrimino grid to the playarea.
+ */
 int tetriminoRowToPlayfieldRow(tetrimino_t* t, int offset){
     return t->playfield_row - TETRIMINO_GRID_CENTER + offset;
 }
 
-/* Helping function to get the tetrimino to the playfield */
+/**
+ * @brief Converts the tetriminos' tiles' column positions in its grid to playfield row coordinates, via the playfield column 
+ * parameter of the tetrimino struct, which refers to the center of the tetrimino grid. To get all tiles in the grid to the playarea,
+ * an offset is used.
+ *
+ * @param t A pointer to the tetrimino currently in use.
+ * @param offset An integer, to get non-center tiles of the tetrimino grid to the playarea.
+ */
 int tetriminoColumnToPlayfieldColumn(tetrimino_t* t, int offset){
     return t->playfield_column - TETRIMINO_GRID_CENTER + offset;
 }
@@ -399,16 +473,29 @@ void transferTetriminoColorsToPlayArea(play_area_t* p, tetrimino_t* t){
     }
 }
 
-/* Sets the position of the tetrimino center. */
+/**
+ * @brief Sets the tetrimino's playfield_row and playfield_center parameters (that detail where the center of the tetrimino is 
+ * currently on the playfield) to a desired position.
+ *
+ * @param t A pointer to the tetrimino currently in use.
+ * @param playfield_row The row of the playfield where the tetrimino should be.
+ * @param playfield_column The colunm of the playfield where the tetrimino should be.
+ */
 void setPositionOfTetriminoViaCenter(tetrimino_t* t, int playfield_row, int playfield_column){
     t->playfield_row = playfield_row;
     t->playfield_column = playfield_column;
 }
 
-/* Checks if the new tetrimino position is valid. 
-Returns -1 if it is not valid.
-Return 0 if the position is valid and the position is not stable.
-Returns 1 if the tetrimino position is stable. */
+/**
+ * @brief Checks if a tetrimino's position on the playfield is valid, ie if it is obstructed by playfield bounds
+ * or other tetriminos.
+ *
+ * @param p A pointer to the play area currently in use.
+ * @param t A pointer to the tetrimmino currently in use.
+ * @return -1 if the position is invalid,
+ * 0 if the position is valid and the position is unstable,
+ * 1 if the position is valid and stable (tetrimino supported on the stack)
+ */
 int checkTetriminoPosition(play_area_t* p, tetrimino_t* t){
     int corresponding_p_row = 0;
     int corresponding_p_column = 0;
@@ -473,6 +560,13 @@ int checkTetriminoPosition(play_area_t* p, tetrimino_t* t){
     return 0;
 }
 
+/**
+ * @brief Removes the tetriminos colors from the current position in the play area, effectively making the squares where the tetrimino
+ * used to be black again. Used for moving the tetrimino.
+ *
+ * @param playfield A pointer to the play area struct currently in use.
+ * @param tetrimino A pointer to the tetrimino struct currently in use.
+ */
 void removeTetriminoColorsFromCurrentPosition(play_area_t* playfield, tetrimino_t* tetrimino){
     int corresponding_p_row = 0;
     int corresponding_p_column = 0; 
@@ -578,9 +672,14 @@ void checkForGameInput(void){
 }
 
 
-
+/**
+ * @brief Builds the calculate bag of tetriminos task. Generates a sequence of random tetrimino names
+ * of size seven, which is used for spawning during the single player mode. 
+ *
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vCalculateBagOfTetriminos(void *pvParameters){
-    char names[7] = { 0 };
+    char names[TETRIMINO_BAG_SIZE] = { 0 };
     char tetriminos[TETRIMINO_BAG_SIZE] = { 'T', 'J', 'Z', 'O', 'S', 'L', 'I' };
     int position = 0;
 
@@ -589,7 +688,7 @@ void vCalculateBagOfTetriminos(void *pvParameters){
             if (xSemaphoreTake(GenerateBagSignal, portMAX_DELAY) == pdTRUE){
 
                 printf("Permutation request received.\n");
-                memcpy(names, tetriminos, 7); // set array again with names of tetriminos
+                memcpy(names, tetriminos, TETRIMINO_BAG_SIZE); // set array again with names of tetriminos
 
                 for (int i = 0; i < TETRIMINO_BAG_SIZE; i++){
 
@@ -611,6 +710,11 @@ random_number_again:
     }
 }
 
+/**
+ * @brief Implements the spawn task for tetriminos.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vSpawnTetrimino(void *pvParameters){
     char name_buffer = 0;
     unsigned int color = 0;
@@ -701,6 +805,11 @@ void vSpawnTetrimino(void *pvParameters){
     }
 }
 
+/**
+ * @brief Moves down a tetrimino by one and checks if the position is valid.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vSafelyMoveTetriminoOneDown(void *pvParameters){
 
     int backup_row = 0;
@@ -769,6 +878,11 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
     }
 }
 
+/**
+ * @brief Moves a tetrimino one field to the right, triggers once the approriate button has been pressed.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vMoveTetriminoToTheRight(void *pvParameters){
     int backup_row = 0;
     int backup_column = 0;
@@ -822,6 +936,11 @@ void vMoveTetriminoToTheRight(void *pvParameters){
     }
 }
 
+/**
+ * @brief Moves a tetrimino one field to the left, triggers once the approriate button has been pressed.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vMoveTetriminoToTheLeft(void *pvParameters){
     int backup_row = 0;
     int backup_column = 0;
@@ -875,6 +994,11 @@ void vMoveTetriminoToTheLeft(void *pvParameters){
     } 
 }
 
+/**
+ * @brief Rotates a tetrimino clockwise one time, triggers once the approriate button has been pressed.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vRotateTetriminoCW(void *pvParameters){
     int backup_orientation = 0;
     int flag = 0;
@@ -934,6 +1058,11 @@ void vRotateTetriminoCW(void *pvParameters){
     }
 }
 
+/**
+ * @brief Rotates a tetrimino counterclockwise one time, triggers once the approriate button has been pressed.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vRotateTetriminoCCW(void *pvParameters){
     int backup_orientation = 0;
     int flag = 0;
@@ -992,6 +1121,12 @@ void vRotateTetriminoCCW(void *pvParameters){
     }
 }
 
+/**
+ * @brief Callback function for the tetrimino locking timer. Once the timer is over, the function finally transfers the tetrimino 
+ * to the playfield and requests a new tetrimino from the spawn task.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vLockingTetriminoIntoPlace(void *pvParameters){
     printf("Send locking.\n");
     if (play_mode.lock){

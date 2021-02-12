@@ -149,12 +149,18 @@ void vSwapBuffers(void *pvParameters)
     }
 }
 
-// State Machine Functionality ###################################
+
 
 unsigned char getCurrentState(states_t* state){
     return state->state;
 }
 
+/**
+ * @brief Decides which state is the next to change to, based on queue input by the tasks.
+ * 
+ * @param state A pointer to hold the state that the state machine will change into.
+ * @param queue_input The state that the state machine is supposed to change into.
+ */
 void changingStateAfterInput(unsigned char *state, unsigned char queue_input){
     *state = queue_input;
     if (*state >= NUMBER_OF_STATES || *state < STARTING_STATE){
@@ -163,6 +169,12 @@ void changingStateAfterInput(unsigned char *state, unsigned char queue_input){
     }
 }
 
+/**
+ * @brief Implements a non-sequential state machine with six possible states in which different tasks get suspended
+ * or blocked. Provides the framework for the tetris game.
+ * 
+ * @param pvParameters Current resources the RTOS provides.
+ */
 void vStateMachine(void *pvParameters){
     unsigned char state_at_the_moment = 0;
     unsigned char queue_input = 0;
@@ -374,7 +386,6 @@ state_handling:
     }
 }
 
-// End of State Machine Functionality #######################################
 
 
 int main(int argc, char *argv[])
