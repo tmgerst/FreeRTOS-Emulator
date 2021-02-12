@@ -1,3 +1,10 @@
+/**
+ * @file main.h
+ * @author Tim Gerstewitz
+ * @date 10th January 2021
+ * @brief Header file for the main file of the tetris project. Contains important things for state transitions.
+ */
+
 #ifndef __MAIN_H__
 #define __MAIN_H__
 

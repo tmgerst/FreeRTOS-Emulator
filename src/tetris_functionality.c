@@ -33,6 +33,9 @@
 #define POINTS_FOR_CLEARING_THREE_LINES 300
 #define POINTS_FOR_CLEARING_FOUR_LINES 1200
 
+#define MAIN_MENU_PLAYFIELD_POS_X 140
+#define MAIN_MENU_PLAYFIELD_WIDTH 360
+
 #define HEADLINE_POSITION 20
 
 #define CHOICE_PLAY_MODE_TEXT_POSITION_Y 80
@@ -656,12 +659,11 @@ void vMainMenu(void *pvParameters){
 
                 // Draw Background
                 tumDrawClear(Gray);
-                tumDrawFilledBox(140, PLAY_AREA_POSITION_Y, 360, 
+                tumDrawFilledBox(MAIN_MENU_PLAYFIELD_POS_X, PLAY_AREA_POSITION_Y, MAIN_MENU_PLAYFIELD_WIDTH, 
                             PLAY_AREA_HEIGHT_IN_TILES*TILE_HEIGHT, Black);
 
                 // Draw Headline
                 tumDrawText(headline_text,SCREEN_WIDTH/2-headline_text_width/2, HEADLINE_POSITION, TUMBlue);
-
 
                 // Determine which play mode is currently chosen and modify the drawing accordingly
                 if (play_mode.lock){

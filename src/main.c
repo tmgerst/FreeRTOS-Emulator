@@ -1,3 +1,10 @@
+/**
+ * @file main.c
+ * @author Tim Gerstewitz
+ * @date 10th January 2021
+ * @brief Source file for the main file of the tetris project. Contains the state machine and of course, the main fucntion.
+ */
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
