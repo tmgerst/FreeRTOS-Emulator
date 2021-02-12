@@ -28,6 +28,8 @@
 
 #define TETRIMINO_BAG_SIZE 7
 
+#define TETRIMINO_QUEUE_RECEIVE_DELAY 2
+
 
 
 extern TaskHandle_t GenerateTetriminoPermutationsTask;
@@ -40,6 +42,8 @@ extern TaskHandle_t RotateTetriminoCCWTask;
 
 extern SemaphoreHandle_t SpawnSignal;
 extern SemaphoreHandle_t GenerateBagSignal;
+
+extern QueueHandle_t TetriminoSelectionQueue;
 
 extern xTimerHandle LockingTetriminoTimer;
 
@@ -93,8 +97,14 @@ extern drop_speed_table_t drop_lookup;
 
 int tetrisGameplayInit(void);
 
+tile_t initTile(unsigned int color);
+void drawTile(int pos_x, int pos_y, tile_t* tile);
+
 void checkForGameInput(void);
+
 void transferTetriminoColorsToPlayArea(play_area_t* playfield, tetrimino_t* tetrimino);
+unsigned int chooseColorForTetrimino(char name);
+
 int clearFullyColoredLines(play_area_t* playfield);
 void drawPlayArea(play_area_t* playfield);
 void clearPlayArea(play_area_t* playfield);

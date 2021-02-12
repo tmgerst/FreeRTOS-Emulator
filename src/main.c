@@ -196,11 +196,11 @@ void vStateMachine(void *pvParameters){
 
         if (StateMachineQueue){
             if (xQueueReceive(StateMachineQueue, &queue_input, portMAX_DELAY) == pdTRUE){
-
                 if (xTaskGetTickCount() - last_state_change > STATE_CHANGE_DELAY){
 
                     if (current_state.lock){
                         if (xSemaphoreTake(current_state.lock, portMAX_DELAY) == pdTRUE){
+                            printf("Change state.\n");
                             changingStateAfterInput(&(current_state.state), queue_input);
                             state_at_the_moment = getCurrentState(&current_state);
                             change_state = 1;
@@ -220,10 +220,14 @@ state_handling:
                 switch(state_at_the_moment){
 
                     case MAIN_MENU:
-                        vTaskSuspend(TetrisStatePausedTask);
+                        vTaskSuspend(TetrisStateSinglePlayingTask);
+                        vTaskSuspend(TetrisStateSinglePausedTask);
+                        vTaskSuspend(TetrisStateDoublePlayingTask);
+                        vTaskSuspend(TetrisStateDoublePausedTask);
                         vTaskSuspend(GameOverScreenTask);
 
-                        vTaskSuspend(TetrisStatePlayingTask);
+                        vTaskSuspend(UDPControlTask);
+
                         vTaskSuspend(GenerateTetriminoPermutationsTask);
                         vTaskSuspend(SpawnTetriminoTask);
                         vTaskSuspend(MoveTetriminoOneDownTask);
@@ -232,6 +236,7 @@ state_handling:
                         vTaskSuspend(RotateTetriminoCWTask);
                         vTaskSuspend(RotateTetriminoCCWTask);
                         vTaskSuspend(ResetGameTask);
+                        vTaskSuspend(ChangeGeneratorModeTask);
 
                         vTaskResume(MainMenuTask);
                         vTaskResume(ChangeLevelTask);
@@ -240,13 +245,15 @@ state_handling:
 
                     case STATE_SINGLE_PLAYING:
                         vTaskSuspend(MainMenuTask);
-                        vTaskSuspend(TetrisStatePausedTask);
+                        vTaskSuspend(TetrisStateSinglePausedTask);
+                        vTaskSuspend(TetrisStateDoublePlayingTask);
+                        vTaskSuspend(TetrisStateDoublePausedTask);
                         vTaskSuspend(GameOverScreenTask);
 
                         vTaskSuspend(ChangeLevelTask);
                         vTaskSuspend(ChangePlayModeTask);
-
-                        vTaskResume(TetrisStatePlayingTask);
+                        vTaskSuspend(ChangeGeneratorModeTask);
+                        vTaskSuspend(UDPControlTask);
 
                         vTaskResume(GenerateTetriminoPermutationsTask);
                         vTaskResume(SpawnTetriminoTask);
@@ -256,11 +263,15 @@ state_handling:
                         vTaskResume(RotateTetriminoCWTask);
                         vTaskResume(RotateTetriminoCCWTask);
                         vTaskResume(ResetGameTask);
+
+                        vTaskResume(TetrisStateSinglePlayingTask);
                         break;
 
                     case STATE_SINGLE_PAUSED:
                         vTaskSuspend(MainMenuTask);
-                        vTaskSuspend(TetrisStatePlayingTask);
+                        vTaskSuspend(TetrisStateSinglePlayingTask);
+                        vTaskSuspend(TetrisStateDoublePlayingTask);
+                        vTaskSuspend(TetrisStateDoublePausedTask);
                         vTaskSuspend(GameOverScreenTask);
 
                         vTaskSuspend(GenerateTetriminoPermutationsTask);
@@ -273,15 +284,68 @@ state_handling:
 
                         vTaskSuspend(ChangeLevelTask);
                         vTaskSuspend(ChangePlayModeTask);
+                        vTaskSuspend(ChangeGeneratorModeTask);
+                        vTaskSuspend(UDPControlTask);
 
-                        vTaskResume(TetrisStatePausedTask);
+                        vTaskResume(TetrisStateSinglePausedTask);
                         vTaskResume(ResetGameTask);
                         break;
 
+                    case STATE_DOUBLE_PLAYING:
+                        vTaskSuspend(MainMenuTask);
+                        vTaskSuspend(TetrisStateSinglePlayingTask);
+                        vTaskSuspend(TetrisStateSinglePausedTask);
+                        vTaskSuspend(TetrisStateDoublePausedTask);
+                        vTaskSuspend(GameOverScreenTask);
+
+                        vTaskSuspend(ChangeLevelTask);
+                        vTaskSuspend(ChangePlayModeTask);
+
+                        vTaskSuspend(GenerateTetriminoPermutationsTask);
+
+                        vTaskResume(SpawnTetriminoTask);
+                        vTaskResume(MoveTetriminoOneDownTask);
+                        vTaskResume(MoveTetriminoToTheRightTask);
+                        vTaskResume(MoveTetriminoToTheLeftTask);
+                        vTaskResume(RotateTetriminoCWTask);
+                        vTaskResume(RotateTetriminoCCWTask);
+                        vTaskResume(ResetGameTask);
+
+                        vTaskResume(TetrisStateDoublePlayingTask);
+                        vTaskResume(ChangeGeneratorModeTask);
+                        vTaskResume(UDPControlTask);
+                        break;
+
+                    case STATE_DOUBLE_PAUSED:
+                        vTaskSuspend(MainMenuTask);
+                        vTaskSuspend(TetrisStateSinglePlayingTask);
+                        vTaskSuspend(TetrisStateSinglePausedTask);
+                        vTaskSuspend(TetrisStateDoublePlayingTask);
+                        vTaskSuspend(GameOverScreenTask);
+
+                        vTaskSuspend(ChangeLevelTask);
+                        vTaskSuspend(ChangePlayModeTask);
+
+                        vTaskSuspend(GenerateTetriminoPermutationsTask);
+                        vTaskSuspend(SpawnTetriminoTask);
+                        vTaskSuspend(MoveTetriminoOneDownTask);
+                        vTaskSuspend(MoveTetriminoToTheRightTask);
+                        vTaskSuspend(MoveTetriminoToTheLeftTask);
+                        vTaskSuspend(RotateTetriminoCWTask);
+                        vTaskSuspend(RotateTetriminoCCWTask);
+
+                        vTaskResume(TetrisStateDoublePausedTask);
+                        vTaskResume(ResetGameTask);
+                        vTaskResume(UDPControlTask);
+                        vTaskResume(ChangeGeneratorModeTask);
+                        break;                        
+
                     case STATE_GAME_OVER:
                         vTaskSuspend(MainMenuTask);
-                        vTaskSuspend(TetrisStatePlayingTask);
-                        vTaskSuspend(TetrisStatePausedTask);
+                        vTaskSuspend(TetrisStateSinglePlayingTask);
+                        vTaskSuspend(TetrisStateSinglePausedTask);
+                        vTaskSuspend(TetrisStateDoublePlayingTask);
+                        vTaskSuspend(TetrisStateDoublePausedTask);
 
                         vTaskSuspend(GenerateTetriminoPermutationsTask);
                         vTaskSuspend(SpawnTetriminoTask);
@@ -293,6 +357,8 @@ state_handling:
 
                         vTaskSuspend(ChangeLevelTask);
                         vTaskSuspend(ChangePlayModeTask);
+                        vTaskSuspend(ChangeGeneratorModeTask);
+                        vTaskSuspend(UDPControlTask);
 
                         vTaskResume(GameOverScreenTask);
                         vTaskResume(ResetGameTask);

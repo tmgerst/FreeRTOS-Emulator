@@ -35,7 +35,7 @@ TaskHandle_t RotateTetriminoCCWTask = NULL;
 
 xTimerHandle LockingTetriminoTimer = NULL;
 
-static QueueHandle_t TetriminoSelectionQueue = NULL;
+QueueHandle_t TetriminoSelectionQueue = NULL;
 
 SemaphoreHandle_t ScreenLock = NULL;
 SemaphoreHandle_t DrawSignal = NULL;
@@ -465,6 +465,7 @@ int checkTetriminoPosition(play_area_t* p, tetrimino_t* t){
     
     // scenario: The tetrimino shifts from a stable position into an unstable one --> timer has to be stopped
     if (xTimerIsTimerActive(LockingTetriminoTimer) == pdTRUE){
+        printf("Stop Timer.\n");
         xTimerStop(LockingTetriminoTimer, 0);
     }
 
@@ -621,10 +622,37 @@ void vSpawnTetrimino(void *pvParameters){
 
                 printf("Spawn request received.\n");
 
-                if (uxQueueMessagesWaiting(TetriminoSelectionQueue) == 0){
-                    xSemaphoreGive(GenerateBagSignal);  // Send signal to generate a new permutation
+                if (uxQueueMessagesWaiting(TetriminoSelectionQueue) <= 1){
+                    if (play_mode.lock){
+                        if (xSemaphoreTake(play_mode.lock, 0) == pdTRUE){
+                            
+                            if (play_mode.mode == SINGLE_MODE){
+                                xSemaphoreGive(play_mode.lock);
+                                xSemaphoreGive(GenerateBagSignal);  // Send signal to generate a new permutation
+                            }
+                            else if (play_mode.mode == DOUBLE_MODE){
+                                xSemaphoreGive(play_mode.lock);
+                                printf("Spawn task gives signal for generator.\n");
+                                xSemaphoreGive(DoubleModeNextSignal);
+                            }
+                        }
+                        xSemaphoreGive(play_mode.lock);
+                    }
                 }
-                xQueueReceive(TetriminoSelectionQueue, &name_buffer, 0);
+
+                if (xQueueReceive(TetriminoSelectionQueue, &name_buffer, TETRIMINO_QUEUE_RECEIVE_DELAY) == pdTRUE){
+                    // if the spawn task receives something, the generator is active. This assumption can also be done in the single player mode,
+                    // since it does no damage there and the generator's activeness is checked additionally when entering the two player mode.
+                    if (generator_mode.lock){
+                        if (xSemaphoreTake(generator_mode.lock, 0) == pdTRUE){
+                            generator_mode.generator_active = 1;
+                            xSemaphoreGive(generator_mode.lock);
+                        }
+                        xSemaphoreGive(generator_mode.lock);
+                    }
+                }
+
+                printf("Spawn task received letter: %c\n", name_buffer);
 
                 color = chooseColorForTetrimino(name_buffer);
 
@@ -638,6 +666,8 @@ void vSpawnTetrimino(void *pvParameters){
                             }
                             xSemaphoreGive(orientation_table.lock);
                         }
+
+                        name_buffer = 0;
 
                         if (playfield.lock) {
                             if (xSemaphoreTake(playfield.lock, 0) == pdTRUE){
@@ -717,8 +747,9 @@ void vSafelyMoveTetriminoOneDown(void *pvParameters){
                         
                         if (flag == -1){  
                             setPositionOfTetriminoViaCenter(&tetrimino, backup_row, backup_column);
-                            printf("Activate Timer.\n");    // if tetrimino was supported in previous position activate timer once
+                            // if tetrimino was supported in previous position activate timer once
                             if (xTimerIsTimerActive(LockingTetriminoTimer) == pdFALSE){
+                                printf("Reset Timer.\n");
                                 xTimerReset(LockingTetriminoTimer, 0);
                             }
                         }
@@ -963,8 +994,21 @@ void vRotateTetriminoCCW(void *pvParameters){
 
 void vLockingTetriminoIntoPlace(void *pvParameters){
     printf("Send locking.\n");
-    xTaskNotifyGive(TetrisStatePlayingTask);
-    xTimerStop(LockingTetriminoTimer, 0);
+    if (play_mode.lock){
+        if (xSemaphoreTake(play_mode.lock, 0) == pdTRUE){
+
+            if (play_mode.mode == SINGLE_MODE){
+                xTaskNotifyGive(TetrisStateSinglePlayingTask);
+                xTimerStop(LockingTetriminoTimer, 0);
+            }
+            if (play_mode.mode == DOUBLE_MODE){
+                xTaskNotifyGive(TetrisStateDoublePlayingTask);
+                xTimerStop(LockingTetriminoTimer, 0);
+            }
+            xSemaphoreGive(play_mode.lock);
+        }
+        xSemaphoreGive(play_mode.lock);
+    }
 }
 
 
@@ -1045,7 +1089,7 @@ int tetrisGameplayInit(void){
     }
 
     // Message sending
-    TetriminoSelectionQueue = xQueueCreate(TETRIMINO_BAG_SIZE, sizeof(char));
+    TetriminoSelectionQueue = xQueueCreate(TETRIMINO_BAG_SIZE+1, sizeof(char));
     if (!TetriminoSelectionQueue){
         PRINT_ERROR("Could not open tetrimino selection queue.");
         goto err_selection_queue;
@@ -1059,16 +1103,15 @@ int tetrisGameplayInit(void){
     }
 
     // Tasks 
-
     if (xTaskCreate(vCalculateBagOfTetriminos, "GenerateTetriminoPermutationsTask",
-                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+1, 
+                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+2, 
                     &GenerateTetriminoPermutationsTask) != pdPASS) {
         PRINT_TASK_ERROR("GenerateTetriminoPermutationsTask");
         goto err_generate_permutations_task;
     } 
 
     if (xTaskCreate(vSpawnTetrimino, "SpawnTetriminoTask",
-                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY, 
+                    mainGENERIC_STACK_SIZE * 2, NULL, mainGENERIC_PRIORITY+1, 
                     &SpawnTetriminoTask) != pdPASS) {
         PRINT_TASK_ERROR("SpawnTetriminoTask");
         goto err_spawn_tetrimino_task;
